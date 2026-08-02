@@ -1,0 +1,23 @@
+# Secrets — never commit. Copy .env.template to .env and fill it in locally.
+.env
+.env.*
+!.env.template
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local vector DB (Open Alliance RAG, deferred)
+chroma_db/
+qdrant_storage/
+
+# Spike output — measurements get written up in the README, not committed raw
+scripts/_out/
