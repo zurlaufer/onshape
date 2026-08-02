@@ -112,7 +112,7 @@ if os.environ.get("FRC_MCP_STDOUT_EXPERIMENT") == "1":
     async def debug_write_to_stdout() -> str:
         """Deliberately write to stdout to observe whether it breaks the session."""
         logger.warning("stdout experiment: writing junk to stdout on purpose")
-        print("BOOM-THIS-SHOULD-NOT-BE-HERE", flush=True)
+        print("BOOM-THIS-SHOULD-NOT-BE-HERE", flush=True)  # allow-print: the whole point
         return "Wrote to stdout. If you can read this, the session survived it."
 
     logger.warning("stdout experiment tool is REGISTERED (Gate 2 only)")

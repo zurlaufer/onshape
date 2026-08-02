@@ -100,6 +100,16 @@ There is no safety net, so the rule is absolute: **never `print()` under `src/`.
 logger, which is bound to stderr. `mcp.run(show_banner=False)` keeps FastMCP's own startup banner
 off the channel too.
 
+Because discipline is the *only* mitigation, it's enforced rather than requested:
+
+```bash
+python scripts/check_no_print.py     # exit 1 on any print() under src/
+```
+
+It parses the AST, so docstrings and comments mentioning `print()` don't trip it. A deliberate
+call can be exempted with an `allow-print` comment on the same line. Wire it to a pre-commit
+hook, and it joins the test suite in Step 4.
+
 Standalone scripts under `scripts/` are exempt — they're CLIs, not MCP servers.
 
 ---
