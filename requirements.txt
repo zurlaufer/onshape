@@ -8,3 +8,5 @@
 fastmcp>=3.0            # MCP server framework (3.x decorator/run API)
 httpx>=0.27             # async HTTP client (non-blocking under the MCP event loop)
 python-dotenv>=1.0      # .env loading
+
+pytest>=8.0             # test runner (physics tests now; client tests in Step 4)

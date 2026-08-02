@@ -84,6 +84,31 @@ Onshape's native AI; we don't reimplement them.
 new student can open it, read it, and test it without understanding anything else here. FRC teams
 turn over completely every year; that module is the part designed to survive it.
 
+```bash
+python -m pytest tests/ -q      # no network, no credentials needed
+```
+
+Every `Motor` requires a `source` URL — the dataclass refuses to construct without one — and
+`describe()` prints the constants it used alongside that URL, so a student can check any answer
+by hand:
+
+```
+4x Kraken X60 (trapezoidal) at 15.00:1 (90% efficient)
+  output free speed  : 400 RPM
+  output stall torque: 382.86 N.m
+  stall current      : 1,464 A total across 4 motors
+...
+  peak power    : 1114 W computed, 1108 W published
+  source        : https://docs.wcproducts.com/...
+```
+
+The tests pin each vendor's published figures and check the linear model against each vendor's
+own peak-power number (agreement is within 6%; both Krakens inside 1.5%).
+
+> **Careful with the NEO.** `3.28 N·m` / `181 A` circulate widely in FRC materials and are **not**
+> what REV publishes — REV's page gives **2.6 N·m / 105 A**. There's a regression test pinning
+> this so nobody "corrects" it back.
+
 ---
 
 ## The stdout rule (read before adding code)
