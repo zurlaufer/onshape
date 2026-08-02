@@ -56,6 +56,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("frc_cad_copilot")
 
+# httpx logs every request at INFO, full URL included. That is what you want
+# while debugging and noise the rest of the time, so let it follow our level
+# instead of its own: visible at FRC_MCP_LOG_LEVEL=DEBUG, quiet otherwise.
+if logger.getEffectiveLevel() > logging.DEBUG:
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
 mcp = FastMCP("frc-cad-copilot")
 
 _client: OnshapeApiClient | None = None
@@ -77,11 +83,15 @@ def get_client() -> OnshapeApiClient:
 
 
 @mcp.tool
-async def onshape_whoami() -> str:
-    """Report which Onshape account this server is authenticated as.
+async def onshape_check_connection() -> str:
+    """Verify that this server can reach and authenticate against Onshape.
 
-    Use this to confirm the Onshape connection is working before running other
-    tools, or to check which account's documents are reachable.
+    Use this to confirm the connection is working before running other tools, or
+    to diagnose whether a failure is credentials, clock skew, or the account.
+
+    Reports document visibility rather than the signed-in identity: identity
+    lives behind /users, which needs the OAuth2ReadPII scope. Project keys carry
+    OAuth2Read only, so asking for identity would 403 on a valid signature.
     """
     try:
         client = get_client()
@@ -90,7 +100,7 @@ async def onshape_whoami() -> str:
         return f"Not configured: {exc}"
 
     try:
-        data = (await client.get("/users/sessioninfo")).json()
+        data = (await client.get("/documents", query={"limit": 1})).json()
     except OnshapeAuthError as exc:
         logger.error("Auth error: %s", exc)
         return f"Authentication failed: {exc}"
@@ -98,9 +108,10 @@ async def onshape_whoami() -> str:
         logger.exception("Onshape request failed")
         return f"Onshape request failed: {type(exc).__name__}: {exc}"
 
-    name = data.get("name") or "(unknown)"
-    email = data.get("email") or "(no email)"
-    return f"Authenticated with Onshape as {name} <{email}> at {client.base_url}"
+    # Zero documents is a pass, not a failure — the 200 is what proves the auth.
+    count = len(data.get("items") or [])
+    reachable = "at least one document visible" if count else "no documents visible"
+    return f"Authenticated with Onshape at {client.base_url} ({reachable})."
 
 
 # Temporary, Gate 2 only. Registered solely when FRC_MCP_STDOUT_EXPERIMENT=1 so

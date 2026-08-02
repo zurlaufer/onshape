@@ -25,8 +25,23 @@ pip install -r requirements.txt
 copy .env.template .env           # Windows  (cp on macOS/Linux)
 ```
 
-Generate an API key pair at **<https://dev-portal.onshape.com/keys>** and paste both values into
-`.env`. The secret is shown exactly once — if you lose it, generate a new pair.
+Generate an API key pair **inside Onshape**, not in a separate developer portal:
+
+| Account type | Path |
+| --- | --- |
+| Personal / education | user icon → **My account** → **Developer** |
+| Enterprise / Classroom (most FRC teams) | user icon → **Enterprise settings** → **Developer** → **API keys** |
+
+Enterprise keys can only be created by an admin, and are assigned to a named member — the key
+inherits that member's permissions.
+
+Grant **`OAuth2Read`** only. That covers everything through Step 3; add `OAuth2Write` when the
+FeatureScript compiler loop starts pushing code back. Never grant `OAuth2Delete` — removing a
+feature from a part studio is a *write*, so the copilot never needs it, and the scope's blast
+radius is whole documents and workspaces.
+
+Paste both values into `.env`. The secret is shown exactly once — if you lose it, generate a new
+pair.
 
 `.env` is gitignored. Never commit it.
 
@@ -47,7 +62,11 @@ Prints your Onshape account name on success. If it fails, see Troubleshooting be
 claude mcp add frc-cad-copilot -- .venv/Scripts/python.exe -m src.mcp.server
 ```
 
-Then ask Claude Code to call `onshape_whoami`. It should report the same account name.
+Then ask Claude Code to call `onshape_check_connection`. It should confirm the same base URL the
+smoke test printed.
+
+It reports document visibility rather than *who* you are: identity lives behind `/users`, which
+needs the `OAuth2ReadPII` scope that these keys deliberately don't carry.
 
 ---
 

@@ -31,7 +31,14 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://cad.onshape.com"
-DEFAULT_API_VERSION = "v6"
+
+# Probed against the live API on 2026-08-03: v0-v26 are accepted, v27 returns
+# 400, and a malformed version returns 404. So Onshape does validate the number
+# -- but every stale version keeps working silently, which is the trap: an old
+# or absent version never errors, it just serves you an older contract.
+# Onshape's guidance is to always call the newest. Re-probe when bumping.
+DEFAULT_API_VERSION = "v26"
+
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
 # Onshape requires at least 16 alphanumeric characters, unique per request.
@@ -76,7 +83,7 @@ def build_auth_headers(
     Args:
         method: HTTP verb. Case-insensitive; normalised to upper case.
         path: URL pathname *including* the `/api/{version}` prefix, e.g.
-            `/api/v6/users/sessioninfo`. Must be exactly what goes on the wire.
+            `/api/v6/documents`. Must be exactly what goes on the wire.
         query: Already-encoded query string with no leading `?`, or `""`.
             Must be byte-identical to what is appended to the URL.
         content_type: Signed even on GET requests, per Onshape's scheme.
@@ -143,7 +150,11 @@ class OnshapeApiClient:
     Use as an async context manager so the connection pool is closed:
 
         async with OnshapeApiClient.from_env() as client:
-            me = (await client.get("/users/sessioninfo")).json()
+            docs = (await client.get("/documents", query={"limit": 1})).json()
+
+    Prefer endpoints covered by the OAuth2Read scope. Anything under /users
+    returns profile data and needs OAuth2ReadPII, which project keys do not
+    carry — it fails with 403 even when the signature is correct.
     """
 
     def __init__(
@@ -183,8 +194,9 @@ class OnshapeApiClient:
         if missing:
             raise OnshapeConfigError(
                 f"Missing required environment variable(s): {', '.join(missing)}. "
-                f"Copy .env.template to .env and fill them in "
-                f"(generate keys at https://dev-portal.onshape.com/keys)."
+                f"Copy .env.template to .env and fill them in (generate keys in "
+                f"Onshape under My account -> Developer, or Enterprise settings "
+                f"-> Developer -> API keys)."
             )
 
         api_version = os.environ.get("ONSHAPE_API_VERSION", DEFAULT_API_VERSION).strip()
@@ -224,8 +236,8 @@ class OnshapeApiClient:
     def build_path(self, path: str) -> str:
         """Prefix an API-relative path with `/api/{version}`.
 
-        Callers pass `/users/sessioninfo`; the version prefix is added here so
-        it can never be forgotten (omitting it silently selects v0).
+        Callers pass `/documents`; the version prefix is added here so it can
+        never be forgotten (omitting it silently selects v0).
         """
         return f"/api/{self.api_version}/{path.lstrip('/')}"
 
@@ -240,8 +252,8 @@ class OnshapeApiClient:
         """Send one signed request. Raises on any non-2xx response.
 
         Args:
-            path: API-relative, e.g. `/users/sessioninfo`. The `/api/{version}`
-                prefix is added for you.
+            path: API-relative, e.g. `/documents`. The `/api/{version}` prefix
+                is added for you.
             query: Encoded here, once. Never passed to httpx as `params=` —
                 httpx would re-encode it and the signature would stop matching.
         """
