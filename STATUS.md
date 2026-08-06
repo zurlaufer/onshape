@@ -1,6 +1,6 @@
 # Project Status
 
-**Last verified: 2026-08-05** — against commit `79550a2`. Untracked: `.mcp.json`, `.vscode/`.
+**Last verified: 2026-08-06** — context layer v1 built and verified live.
 
 > Maintained by Claude. Updated at the end of any session that changes project state, so picking
 > the project back up doesn't require re-scanning the codebase or re-running discovery. If
@@ -44,10 +44,14 @@ so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existi
 | Path | State |
 |---|---|
 | `src/api/onshape_client.py` | HMAC signing + signed async requests. **No retry/backoff yet** (Step 4). Verified live. |
-| `src/mcp/server.py` | FastMCP server, 1 tool (`onshape_check_connection`) of an 8-tool budget. |
+| `src/mcp/server.py` | FastMCP server, **3 tools** of an 8-tool budget. |
+| `src/context/cache.py` | Microversion-keyed disk cache. Cold = 2 requests, warm = 1 (49 bytes). |
+| `src/context/graph.py` | `AssemblyGraph` — named tree + definition dedup. Pure, no I/O. |
+| `src/context/queries.py` | Narrow queries behind a hard 8 KB response ceiling. |
 | `src/physics/motors.py` | Kraken X60 (trapezoidal + FOC), NEO V1.1. Dependency-free. Vendor-verified constants. |
 | `src/skills/` | Empty — FeatureScript work, gated behind spike 3b. |
 | `tests/test_motors.py` | 41 tests, no network or credentials needed. |
+| `tests/test_context_graph.py` | 35 tests over a synthetic fixture; 76 total. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -134,12 +138,16 @@ That is **63× the claimed 20 KB**, and it is not an outlier — it is one ordin
 transforms rounded to 4 dp yields 215,717 bytes. Still ~10× over the claim, and roughly 54k
 tokens of JSON: far too large to hand a model per call.
 
-**Conclusion: reduction must be semantic, not format-level.** Fetching a "lightweight spatial
-graph" per call does not work at robot scale. The workable shape is the one the original brief's
-own diagram implied but its payload claim ignored — a **local cache plus a query layer**: pull
-the 1.2 MB once, hold it, and answer narrow questions from it ("bounding box of this
-subassembly", "the 8 parts in the intake", "total mass") without ever returning the occurrence
-list. See Open decisions.
+**Conclusion: reduction must be semantic, not format-level.** — **BUILT, see `src/context/`.**
+Measured result on the same robot: the default overview is **308 bytes**, a **3,536:1**
+reduction, and a warm call costs one 49-byte request instead of 1.09 MB.
+
+**A trap inside the fix, worth knowing before touching `graph.py`:** a component's identity is
+`(documentId, elementId, configuration, partId)`. **`partId` is not optional** — one Part Studio
+holds many parts, so keying on document+element alone merged 483 distinct parts into 105 groups.
+One group fused 90 unrelated items (screws, shims, tread, shafts) and reported a single shaft as
+used **360 times** instead of 4. Caught only by sanity-checking a live number that looked
+implausible. A regression test now pins it.
 
 **Two mass-properties endpoints time out at 30 s** on a real robot. That is a latency problem
 independent of size, and it rules those endpoints out of any interactive tool call as-is.
@@ -281,15 +289,15 @@ claim itself is still open.
 
 ## Next action
 
-**Nothing is blocked.** All three spikes are closed and both remaining items are design
-decisions, not access problems:
+**Context layer v1 is done** — navigation and search, verified live (1.09 MB → 308 bytes).
 
-1. **Rework the context layer** along the four patterns above (microversion cache → HLOD →
-   local index → structured summaries). This replaces the falsified "fetch a lightweight graph
-   per call" premise.
-2. **Decide what the FeatureScript skill becomes** now that no error messages are available:
+Two things remain, neither blocked:
+
+1. **Decide what the FeatureScript skill becomes** now that no error messages are available:
    a constrained template library validated by a binary pass/fail signal, rather than free-form
    generation with error-driven correction.
+2. **Step 4 — harden the client**: quota-aware proactive backoff using `x-rate-limit-remaining`,
+   and per-endpoint timeouts (the 30 s default is what makes mass properties fail).
 
-Step 4 (hardened client: quota-aware proactive backoff, per-endpoint timeouts) is unblocked and
-can now be designed against measured numbers rather than guesses.
+Context layer v2, when wanted: mass properties and transforms. Both currently time out at 30 s on
+a real robot. The cache and graph built here are the foundation either way.

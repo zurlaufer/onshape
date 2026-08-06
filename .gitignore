@@ -24,3 +24,6 @@ scripts/_out/
 
 # Editor
 .vscode/
+
+# Assembly definition cache (holds real document content)
+.cache/

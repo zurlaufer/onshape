@@ -48,6 +48,9 @@ from src.api.onshape_client import (
     OnshapeAuthError,
     OnshapeConfigError,
 )
+from src.context.cache import AssemblyCache
+from src.context.graph import AssemblyGraph
+from src.context.queries import assembly_overview, find_parts
 
 logging.basicConfig(
     stream=sys.stderr,
@@ -65,6 +68,7 @@ if logger.getEffectiveLevel() > logging.DEBUG:
 mcp = FastMCP("frc-cad-copilot")
 
 _client: OnshapeApiClient | None = None
+_cache = AssemblyCache()
 
 
 def get_client() -> OnshapeApiClient:
@@ -114,19 +118,84 @@ async def onshape_check_connection() -> str:
     return f"Authenticated with Onshape at {client.base_url} ({reachable})."
 
 
-# Temporary, Gate 2 only. Registered solely when FRC_MCP_STDOUT_EXPERIMENT=1 so
-# the production tool surface stays at one tool. Delete once the README records
-# how this server behaves when something writes to stdout.
-if os.environ.get("FRC_MCP_STDOUT_EXPERIMENT") == "1":
+async def _load_graph(document_id: str, workspace_id: str, element_id: str):
+    """Fetch (or reuse) an assembly definition and index it.
 
-    @mcp.tool
-    async def debug_write_to_stdout() -> str:
-        """Deliberately write to stdout to observe whether it breaks the session."""
-        logger.warning("stdout experiment: writing junk to stdout on purpose")
-        print("BOOM-THIS-SHOULD-NOT-BE-HERE", flush=True)  # allow-print: the whole point
-        return "Wrote to stdout. If you can read this, the session survived it."
+    The cache means the 1.09 MB definition is fetched once per document edit
+    rather than once per question; a warm call costs a single 49-byte request.
+    """
+    client = get_client()
+    raw = await _cache.get_definition(client, document_id, workspace_id, element_id)
+    return AssemblyGraph.from_definition(raw)
 
-    logger.warning("stdout experiment tool is REGISTERED (Gate 2 only)")
+
+def _explain(exc: Exception) -> str:
+    if isinstance(exc, OnshapeConfigError):
+        return f"Not configured: {exc}"
+    if isinstance(exc, OnshapeAuthError):
+        return f"Authentication failed: {exc}"
+    logger.exception("assembly request failed")
+    return f"Onshape request failed: {type(exc).__name__}: {exc}"
+
+
+@mcp.tool
+async def onshape_assembly_overview(
+    document_id: str,
+    workspace_id: str,
+    element_id: str,
+    path: str | None = None,
+    depth: int = 1,
+) -> str:
+    """Show the structure of an Onshape assembly, or of one subassembly in it.
+
+    Start with no `path` to see the top level, then drill in by passing the
+    `path` of a child from the previous result. Navigating down is much cheaper
+    and clearer than raising `depth`, which grows the result very fast.
+
+    Identical components are collapsed into one entry with a count, so four
+    matching swerve modules appear once as `count: 4` rather than four times.
+
+    Args:
+        document_id: Onshape document id (the `/documents/{id}` segment of a URL).
+        workspace_id: Workspace id (the `/w/{id}` segment).
+        element_id: The assembly tab's element id (the `/e/{id}` segment).
+        path: Slash-separated component names from a previous result, e.g.
+            "Robot <1>/Drivetrain <1>". Omit for the top level.
+        depth: How many levels to show, 0-3. Defaults to 1.
+    """
+    try:
+        graph = await _load_graph(document_id, workspace_id, element_id)
+    except Exception as exc:  # noqa: BLE001 - always answer the caller
+        return _explain(exc)
+    return assembly_overview(graph, path=path, depth=depth)
+
+
+@mcp.tool
+async def onshape_find_part(
+    document_id: str,
+    workspace_id: str,
+    element_id: str,
+    query: str,
+) -> str:
+    """Find components in an assembly whose name contains some text.
+
+    Returns each match's full path, which can be passed to
+    `onshape_assembly_overview` to explore around it. Matches are deduplicated,
+    so a component reused in several places is reported once with the number of
+    places it appears.
+
+    Args:
+        document_id: Onshape document id.
+        workspace_id: Workspace id.
+        element_id: The assembly tab's element id.
+        query: Text to look for in component names, case-insensitive. Shorter
+            fragments match more; try "swerve" before "swerve module v3".
+    """
+    try:
+        graph = await _load_graph(document_id, workspace_id, element_id)
+    except Exception as exc:  # noqa: BLE001 - always answer the caller
+        return _explain(exc)
+    return find_parts(graph, query)
 
 
 def main() -> None:

@@ -1,0 +1,310 @@
+{
+  "_comment": [
+    "Synthetic assembly definition mirroring the shape of a real Onshape response.",
+    "A real one is 1.09 MB, far too large to commit, so this reproduces only the",
+    "structural features the graph code has to handle correctly:",
+    "  - subassemblies joined by (documentId, elementId, configuration)",
+    "  - two DIFFERENT parts sharing one Part Studio (same doc+elem, different partId)",
+    "  - ONE definition instantiated four times (Swerve Module) -> dedup must fire",
+    "  - Onshape's <n> sibling suffixes",
+    "  - a parts[] array with NO name field, as Onshape actually returns",
+    "  - nesting five levels deep, so search has something real to find",
+    "Shape validated against the live Citrus Circuits robot on 2026-08-05.",
+    "Tree: Robot > Drivetrain > Swerve Module x4 > Motor Assembly > Kraken X60"
+  ],
+  "rootAssembly": {
+    "instances": [
+      {
+        "type": "Assembly",
+        "id": "MrootRobot0001",
+        "name": "Robot <1>",
+        "suppressed": false,
+        "configuration": "default",
+        "fullConfiguration": "default",
+        "documentId": "D1",
+        "elementId": "E1",
+        "documentMicroversion": "MV000000000000000000001"
+      }
+    ],
+    "patterns": [],
+    "parametricInstances": [],
+    "occurrences": [
+      {
+        "mateStatuses": null,
+        "fixed": false,
+        "hidden": false,
+        "transform": [
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "path": [
+          "MrootRobot0001"
+        ]
+      },
+      {
+        "mateStatuses": null,
+        "fixed": false,
+        "hidden": false,
+        "transform": [
+          1.0,
+          0.0,
+          0.0,
+          0.2,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "path": [
+          "MrootRobot0001",
+          "MdriveTrain00001"
+        ]
+      }
+    ],
+    "configuration": "default",
+    "fullConfiguration": "default",
+    "documentId": "D0",
+    "elementId": "E0",
+    "documentMicroversion": "MV000000000000000000000"
+  },
+  "subAssemblies": [
+    {
+      "documentId": "D1",
+      "elementId": "E1",
+      "configuration": "default",
+      "fullConfiguration": "default",
+      "patterns": [],
+      "parametricInstances": [],
+      "instances": [
+        {
+          "type": "Assembly",
+          "id": "MdriveTrain00001",
+          "name": "1678-2026-E-0700 Drivetrain <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D2",
+          "elementId": "E2"
+        },
+        {
+          "type": "Assembly",
+          "id": "Mintake000000001",
+          "name": "Intake <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D4",
+          "elementId": "E4"
+        }
+      ]
+    },
+    {
+      "documentId": "D2",
+      "elementId": "E2",
+      "configuration": "default",
+      "fullConfiguration": "default",
+      "patterns": [],
+      "parametricInstances": [],
+      "instances": [
+        {
+          "type": "Assembly",
+          "id": "Mswerve000000001",
+          "name": "Swerve Module <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D3",
+          "elementId": "E3"
+        },
+        {
+          "type": "Assembly",
+          "id": "Mswerve000000002",
+          "name": "Swerve Module <2>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D3",
+          "elementId": "E3"
+        },
+        {
+          "type": "Assembly",
+          "id": "Mswerve000000003",
+          "name": "Swerve Module <3>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D3",
+          "elementId": "E3"
+        },
+        {
+          "type": "Assembly",
+          "id": "Mswerve000000004",
+          "name": "Swerve Module <4>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D3",
+          "elementId": "E3"
+        },
+        {
+          "type": "Part",
+          "id": "MbellyPan0000001",
+          "name": "Belly Pan <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D9",
+          "elementId": "E9",
+          "partId": "PBELLY"
+        }
+      ]
+    },
+    {
+      "documentId": "D3",
+      "elementId": "E3",
+      "configuration": "default",
+      "fullConfiguration": "default",
+      "patterns": [],
+      "parametricInstances": [],
+      "instances": [
+        {
+          "type": "Assembly",
+          "id": "MmotorAsm0000001",
+          "name": "Motor Assembly <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D5",
+          "elementId": "E5"
+        },
+        {
+          "type": "Part",
+          "id": "Mwheel0000000001",
+          "name": "Billet Wheel <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D6",
+          "elementId": "E6",
+          "partId": "PWHEEL"
+        }
+      ]
+    },
+    {
+      "documentId": "D5",
+      "elementId": "E5",
+      "configuration": "default",
+      "fullConfiguration": "default",
+      "patterns": [],
+      "parametricInstances": [],
+      "instances": [
+        {
+          "type": "Part",
+          "id": "Mkraken000000001",
+          "name": "Kraken X60 <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D7",
+          "elementId": "E7",
+          "partId": "PKRAKEN"
+        },
+        {
+          "type": "Part",
+          "id": "Mgearplate000001",
+          "name": "Gearbox Plate <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D8",
+          "elementId": "E8",
+          "partId": "PPLATE"
+        }
+      ]
+    },
+    {
+      "documentId": "D4",
+      "elementId": "E4",
+      "configuration": "default",
+      "fullConfiguration": "default",
+      "patterns": [],
+      "parametricInstances": [],
+      "instances": [
+        {
+          "type": "Part",
+          "id": "Mroller000000001",
+          "name": "Intake Roller <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D10",
+          "elementId": "E10",
+          "partId": "PROLLER"
+        },
+        {
+          "type": "Part",
+          "id": "Mbracket00000001",
+          "name": "Bracket <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D11",
+          "elementId": "E11",
+          "partId": "PBRACKET"
+        },
+        {
+          "type": "Part",
+          "id": "Mbracket00000002",
+          "name": "Bracket <2>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D11",
+          "elementId": "E11",
+          "partId": "PBRACKET"
+        },
+        {
+          "type": "Part",
+          "id": "Mstandoff0000001",
+          "name": "Standoff <1>",
+          "suppressed": false,
+          "configuration": "default",
+          "documentId": "D11",
+          "elementId": "E11",
+          "partId": "PSTANDOFF"
+        }
+      ]
+    }
+  ],
+  "parts": [
+    {
+      "isStandardContent": false,
+      "partId": "JFD",
+      "bodyType": "solid",
+      "configuration": "default",
+      "fullConfiguration": "default",
+      "documentId": "D7",
+      "elementId": "E7",
+      "documentMicroversion": "MV000000000000000000007"
+    },
+    {
+      "isStandardContent": false,
+      "partId": "JHK",
+      "bodyType": "solid",
+      "configuration": "default",
+      "fullConfiguration": "default",
+      "documentId": "D8",
+      "elementId": "E8",
+      "documentMicroversion": "MV000000000000000000008"
+    }
+  ],
+  "partStudioFeatures": []
+}

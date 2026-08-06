@@ -4,9 +4,10 @@ A FastMCP server that gives Claude Code FRC-specific engineering tooling on top 
 physics validation, parametric FeatureScript generation, and lightweight CAD context — with the
 student staying in control of the design.
 
-**Status: walking skeleton.** Steps 0–2 are built (auth client + one-tool MCP server). The
-architecture spikes (Step 3) and the hardened client (Step 4) come next. See the project plan
-for the full sequence and the failure-mode analysis.
+**Status:** auth client, MCP server (3 tools), motor physics, and the assembly context layer are
+built and verified against a real FRC robot. All three architecture spikes are closed — two of
+them falsified premises in the original brief; see `STATUS.md`. Next: hardening the client with
+quota-aware backoff, and rescoping the FeatureScript skill.
 
 ---
 
@@ -94,10 +95,34 @@ use.
 src/
   api/onshape_client.py   HMAC-SHA256 signing + signed requests
   mcp/server.py           FastMCP server and tool definitions
+  context/                assembly cache, index, and narrow queries
   physics/                motor curves, gear ratios, deflection  (no Onshape dependency)
   skills/                 FeatureScript generation + correction loop
 scripts/                  smoke tests and throwaway spikes
 ```
+
+### Assembly context
+
+A real FRC robot assembly is **1.09 MB** — the brief's "~20 KB lightweight spatial graph" premise
+was measured and falsified. `src/context/` replaces it with cache → level-of-detail → index →
+summaries, and the default overview of that same robot is **308 bytes**.
+
+```
+onshape_assembly_overview(document_id, workspace_id, element_id)   # top level, ~300 B
+onshape_assembly_overview(..., path="Epsilon <1>", depth=1)        # drill in by name-path
+onshape_find_part(..., query="swerve")                             # search, deduplicated
+```
+
+Navigating down via `path` is far cheaper than raising `depth`: depth 1 is ~400 bytes, depth 2 is
+32 KB. Every result passes through an 8 KB ceiling that degrades and says which argument to narrow.
+
+The cache is keyed on document microversion, so a repeat question costs a single **49-byte**
+request rather than refetching 1.09 MB.
+
+> **Editing `graph.py`?** A component's identity is
+> `(documentId, elementId, configuration, partId)`. `partId` is **not** optional — one Part Studio
+> holds many parts, and omitting it merged 90 unrelated components on the real robot. A regression
+> test pins this.
 
 ### Two standing constraints
 
