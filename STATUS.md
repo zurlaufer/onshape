@@ -33,7 +33,7 @@ so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existi
 | 1 — live auth | The HMAC signature is accepted by Onshape | **PASS** — 200 on `GET /documents?limit=1` |
 | 2 — MCP wiring | Claude Code ↔ server ↔ Onshape | **PASS** — `onshape_check_connection` called through the real Claude Code MCP path, returned live data |
 | 3a — payload size | Is the "~20 KB spatial graph" claim real? | **DONE — claim FALSIFIED.** A real robot assembly is 1.2 MB, 63× the claim. Requires an architecture change (see Settled facts) |
-| 3b — FeatureScript errors | Can regeneration errors be read programmatically? | **BLOCKED** — no Feature Studio exists, and creating one is a write |
+| 3b — FeatureScript errors | Can regeneration errors be read programmatically? | **DONE — partially falsified.** Failure is *detectable* but Onshape returns **no error message**, for either compile or regeneration. It is a validation loop, not a correction loop |
 | 3c — rate limit ceiling | How much headroom does the retry budget have? | **PASS** — measured; Onshape advertises remaining quota in a header |
 | 4 — hardened client | Retry/backoff + signing regression tests | **NOT STARTED** — now has real numbers to design against |
 
@@ -50,7 +50,7 @@ so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existi
 | `tests/test_motors.py` | 41 tests, no network or credentials needed. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
-| `.mcp.json` | Untracked. Registers the server for Claude Code. **Decide whether to commit it** — see Open decisions. |
+| `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
 
 ## Environment
 
@@ -144,24 +144,39 @@ list. See Open decisions.
 **Two mass-properties endpoints time out at 30 s** on a real robot. That is a latency problem
 independent of size, and it rules those endpoints out of any interactive tool call as-is.
 
+**FeatureScript error reporting — measured 2026-08-05, and the news is bad.** Full round trip
+tested against a real Feature Studio: write source, define a feature, insert it into a Part
+Studio, read back status. Everything restored afterwards.
+
+| Question | Answer |
+|---|---|
+| Can we write FeatureScript over the API? | **Yes** — POST returns 200 |
+| Does a *syntax* error come back? | **No.** POST of broken source returns **200 with no error field** |
+| Can we detect a syntax error at all? | Only indirectly: `/featurespecs` count drops (1 → 0) |
+| Can we insert a custom feature? | **Yes** — namespace format is `e{elementId}::m{microversion}` |
+| Does a *regeneration* error come back? | **Status only** — `featureStates[id].featureStatus == "ERROR"` |
+| Is the thrown message returned? | **No.** A `regenError("...")` string appears nowhere in the response |
+| Do *API-level* errors have messages? | **Yes** — e.g. a bad namespace returns a clear `message` field |
+
+**This confirms FM1 and is worse than FM1 predicted.** The plan warned that the compile half is
+the easy half. In fact *neither* half yields a message. What the API provides is a **binary
+pass/fail signal**, not diagnostics.
+
+So the brief's "intercept compilation errors and feed them back to the LLM for automated
+syntax/query correction" **cannot work as written**. There is nothing to feed back. What is
+achievable is a *validation* loop: generate, detect pass/fail, regenerate on failure — blind
+retry rather than informed correction. Onshape's own editor shows line-numbered errors, so the
+information exists; it is simply not on the documented REST surface.
+
 ---
 
 ## Blockers
 
-**Spike 3b — two things missing, and the first is the cheap one.**
-
-1. **No `FEATURESTUDIO` element exists in any document.** Create one by hand in the Onshape UI in
-   a scratch document (`asm-try1`). No API, no scope change, no risk — and it immediately allows
-   testing the *read* half: can we retrieve Feature Studio contents, and is there a structured
-   notices/errors field?
-2. **Writing to it needs `OAuth2Write`.** Reading regeneration errors — the half that actually
-   matters (FM1) — probably needs it too.
+All three spikes are closed. Nothing is currently blocked on access or credentials — what
+remains are two design decisions (see Open decisions), both consequences of spike findings.
 
 Never grant `OAuth2Delete`. Removing a feature is a *write*, so the copilot never needs Delete,
-and Delete's blast radius is whole documents and workspaces.
-
-**Spike 3a is closed** — see Settled facts. A real robot assembly (`1678 2026`) measured 1.2 MB.
-The consequence is an architecture change, not a blocker.
+and Delete's blast radius is whole documents and workspaces. Confirmed off on the current keys.
 
 ## Test material available in Onshape
 
@@ -181,11 +196,6 @@ repo goes public (FRC teams often open-source): they identify real documents in 
 
 ## Open decisions
 
-**Commit `.mcp.json`?** Committing it makes registration automatic for the next person, which
-directly attacks the onboarding-friction failure mode. It hardcodes a Windows venv path
-(`.venv/Scripts/python.exe`), which breaks on macOS/Linux. Leaning: commit it, note the path
-assumption in the README.
-
 **One shared API key vs. one per student.** Deferred deliberately — costs nothing in code, since
 `from_env()` already reads per-machine and a stdio server is inherently one-process-one-user.
 Per-student keys are a provisioning step, not a feature. Revisit when a second person starts
@@ -195,22 +205,47 @@ key is very likely one rate-limit bucket (spike 3c will confirm).
 **Physics scope.** `motors.py` is done. `stress.py` (beam deflection, safety factors) is
 unstarted and fully unblocked — pure maths, no auth, good work to hand to a student.
 
-**How to replace the falsified "lightweight spatial graph" (decide before Step 5).** Measured
-options, given that the assembly definition is 1.2 MB and 83% format-level reduction still leaves
-215 KB:
+**How to replace the falsified "lightweight spatial graph" (decide before Step 5).**
 
-- **Cache + query layer (recommended).** Fetch the assembly definition once, hold it in the
-  server, and expose narrow tools that answer questions from it. The model never sees the
-  occurrence list. Costs one 1.2 MB fetch per document per session against a ~1000-request
-  budget, which is affordable; the brief's own architecture diagram already had a "Local State
-  Cache & Data Reducer" box, so this is closer to honouring the design than abandoning it.
-- **Subassembly-level aggregation.** Return 20 subassembly bounding boxes rather than 1,320
-  occurrence transforms. Much smaller, but loses per-part placement.
-- **Never: pass the definition through.** 215 KB is ~54k tokens even after reduction.
+This is a well-trodden problem outside CAD: *a large authoritative dataset that a
+bandwidth-limited consumer must query.* Four borrowed patterns, in the order they should be
+applied. They compose — this is not a menu of alternatives.
+
+**1. Microversion as a cache key (from git / rsync / HTTP ETags).** Onshape microversions are
+immutable and directly addressable — swap `/w/{workspaceId}` for `/m/{microversionId}` in any
+URL. `sourceMicroversion` comes back on nearly every response. That is a content hash handed to
+us for free: cache the 1.2 MB against it, and a cheap check tells us whether anything changed.
+The expensive fetch happens once per edit, not once per question. Against a ~1000-request daily
+budget this is the difference between viable and not.
+
+**2. Hierarchical level of detail (from game engines and map tile servers).** No renderer ships
+a million polygons and no map server ships the planet; both serve coarse data by default and
+refine only where the camera is looking. Same move here: **20 subassembly bounding boxes by
+default, drill into per-part transforms only for the subassembly in question.** HLOD is the
+established name for this. The "camera" is the student's question.
+
+**3. Index and query, don't scan (from databases).** With no server-side query language, build
+the equivalent locally — a materialised view over the cached definition, so tools answer "the 8
+parts in the intake" without a linear pass over 1,320 occurrences reaching the model.
+
+**4. Structured summaries, not raw state (from the CAD-agent literature).** *Embodied CAD*
+(arXiv 2606.31252) grounds LLM agents in exactly this domain and returns **structured solver
+feedback — validity checks, volumes, bounding boxes, topology summaries** — rather than raw
+geometry. Convergent evidence that summaries beat dumps, from people who tried both.
+
+**Hard rule that falls out: the occurrence list never reaches the model.** 215 KB post-reduction
+is ~54k tokens.
 
 Also needs deciding: the two mass-properties endpoints time out at 30 s on a real robot. Either
-raise the timeout for those specific calls, compute mass from the cached `parts` block, or drop
-them from the tool surface.
+raise the timeout for those calls specifically, compute mass from the cached `parts` block, or
+drop them from the tool surface.
+
+**And for spike 3b's finding — no error messages.** The same literature suggests the fallback:
+if Onshape will not say *what* is wrong, generate from a **constrained library of known-good
+patterns** rather than free-form FeatureScript. *Embodied CAD*'s L0–L4 skill hierarchy exists
+because "a raw CAD scripting space is too large for reliable long-horizon LLM planning". A binary
+pass/fail signal is workable against a small library of parameterised templates; it is close to
+useless against unconstrained generation.
 
 ---
 
@@ -228,6 +263,13 @@ wrong NEO figures before they were baked in.
 three issues: 20 API versions behind, a stale tool name in the README, and httpx logging every
 request at INFO.
 
+**2026-08-05 — all three spikes closed.** Spike 3b run end to end against a real Feature Studio:
+FeatureScript written over the API, a custom feature defined and inserted into a Part Studio,
+regeneration status read back, everything restored. Result: failure is detectable but **Onshape
+returns no error message** for either compile or regeneration — the correction loop the brief
+specified cannot work as written. Researched cross-domain solutions to the payload problem and
+recorded four composable patterns. `.mcp.json` committed with a macOS path caveat.
+
 **2026-08-05 — status check, then spikes 3a and 3c.** Everything re-verified green. Gate 2 closed
 properly (tool called through the real Claude Code MCP path). New API keys installed; they carry
 `OAuth2ReadPII`, which the previous ones did not. Ran spike 3c: found Onshape advertises
@@ -239,10 +281,15 @@ claim itself is still open.
 
 ## Next action
 
-**You:** create a Feature Studio by hand in `asm-try1`, and put a few parts into one of the
-assemblies. Both are UI actions, no scope change, and between them they unblock the remaining
-half of 3a and the read half of 3b.
+**Nothing is blocked.** All three spikes are closed and both remaining items are design
+decisions, not access problems:
 
-**Then:** re-run `scripts/spike_3a_payload.py` for per-instance cost, and probe Feature Studio
-reads for a structured error field. After that, Step 4 (hardened client) can finally be designed
-against measured numbers instead of guesses.
+1. **Rework the context layer** along the four patterns above (microversion cache → HLOD →
+   local index → structured summaries). This replaces the falsified "fetch a lightweight graph
+   per call" premise.
+2. **Decide what the FeatureScript skill becomes** now that no error messages are available:
+   a constrained template library validated by a binary pass/fail signal, rather than free-form
+   generation with error-driven correction.
+
+Step 4 (hardened client: quota-aware proactive backoff, per-endpoint timeouts) is unblocked and
+can now be designed against measured numbers rather than guesses.

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "frc-cad-copilot": {
+      "type": "stdio",
+      "command": ".venv/Scripts/python.exe",
+      "args": [
+        "-m",
+        "src.mcp.server"
+      ],
+      "env": {}
+    }
+  }
+}

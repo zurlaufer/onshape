@@ -58,6 +58,15 @@ Prints your Onshape account name on success. If it fails, see Troubleshooting be
 
 ### Register the MCP server with Claude Code
 
+`.mcp.json` is committed, so the server registers itself when you open this folder — no command
+needed.
+
+> **On macOS or Linux, edit `.mcp.json` first.** It hardcodes the Windows interpreter path
+> `.venv/Scripts/python.exe`; change it to `.venv/bin/python`. JSON permits no comments, so this
+> note lives here and in `STATUS.md`.
+
+To register it by hand instead:
+
 ```bash
 claude mcp add frc-cad-copilot -- .venv/Scripts/python.exe -m src.mcp.server
 ```
