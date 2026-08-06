@@ -1,6 +1,6 @@
 # Project Status
 
-**Last verified: 2026-08-05** — against commit `4e3da29`, working tree clean apart from `.mcp.json`.
+**Last verified: 2026-08-05** — against commit `79550a2`. Untracked: `.mcp.json`, `.vscode/`.
 
 > Maintained by Claude. Updated at the end of any session that changes project state, so picking
 > the project back up doesn't require re-scanning the codebase or re-running discovery. If
@@ -10,11 +10,18 @@
 
 ## Where we are in one paragraph
 
-The walking skeleton is **complete and verified live**: signed requests reach Onshape, the MCP
-server runs, and one tool works end to end. The motor physics module is built and tested. The
-next milestone is **Step 3 — the architecture spikes**, which are the last things that can still
-tell us the design needs to change. Two of the three spikes are unblocked right now; the third
-(FeatureScript) needs a wider API key scope.
+The walking skeleton is **complete and verified live** through all three gates: signed requests
+reach Onshape, the MCP server runs, and a tool works end to end from Claude Code. The motor
+physics module is built and tested.
+
+**Spike 3a did its job and the news is bad in the useful way: the "~20 KB lightweight spatial
+graph" premise is false.** A real FRC robot assembly is 1.2 MB, and even 83% reduction leaves
+215 KB — far too much to hand a model per call. This does not sink the project, but it does
+replace "fetch a small graph each time" with "cache once, answer narrow queries from it". That
+redesign is the next real decision.
+
+Spike 3c is done and produced a gift: Onshape advertises remaining quota in a response header,
+so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existing at all.
 
 ---
 
@@ -25,7 +32,7 @@ tell us the design needs to change. Two of the three spikes are unblocked right 
 | 0 — key hygiene | `.env` ignored before keys hit disk | **PASS** — `.env` untracked, ignored, verified |
 | 1 — live auth | The HMAC signature is accepted by Onshape | **PASS** — 200 on `GET /documents?limit=1` |
 | 2 — MCP wiring | Claude Code ↔ server ↔ Onshape | **PASS** — `onshape_check_connection` called through the real Claude Code MCP path, returned live data |
-| 3a — payload size | Is the "~20 KB spatial graph" claim real? | **PARTIAL** — the *principle* is confirmed (200:1 vs raw geometry), but the claim itself is untested: every assembly on the account is empty |
+| 3a — payload size | Is the "~20 KB spatial graph" claim real? | **DONE — claim FALSIFIED.** A real robot assembly is 1.2 MB, 63× the claim. Requires an architecture change (see Settled facts) |
 | 3b — FeatureScript errors | Can regeneration errors be read programmatically? | **BLOCKED** — no Feature Studio exists, and creating one is a write |
 | 3c — rate limit ceiling | How much headroom does the retry budget have? | **PASS** — measured; Onshape advertises remaining quota in a header |
 | 4 — hardened client | Retry/backoff + signing regression tests | **NOT STARTED** — now has real numbers to design against |
@@ -105,19 +112,37 @@ Consequences for the Step 4 retry design:
   `x-rate-limit-remaining` at the start of the next session; if it is back near 1000, it
   refills at least daily. That costs one request instead of a burst.
 
-**Payload sizes, measured 2026-08-05** on `chasis-try1` (a real part studio; all assemblies on
-the account are empty, so the assembly side is still untested):
+**Payload sizes — the "~20 KB spatial graph" claim is FALSIFIED.** Measured 2026-08-05 against
+`1678 2026`, a real Citrus Circuits robot assembly (**1,320 occurrences, 20 subassemblies**):
 
 | What | Bytes |
 |---|---|
-| Lightweight context (bbox + mass props + config) | **2,358** |
-| Feature list — one part studio | **67,318** |
-| Tessellated faces — raw geometry | **470,315** |
+| **Assembly definition** | **1,255,145** (1.2 MB) |
+| — of which `occurrences` | 553,598 (1,320 × ~419 B) |
+| — of which `subAssemblies` | 377,771 |
+| — of which `parts` | 156,917 |
+| Assembly bounding box (whole assembly) | 187 |
+| Assembly mass properties | **ReadTimeout at 30 s** |
+| Part studio mass properties | **ReadTimeout at 30 s** |
 
-The ~200:1 ratio between lightweight context and raw geometry validates the *principle* the
-architecture rests on. The "~20 KB" figure itself remains unverified, because the payload that
-actually scales — the assembly definition, which grows with instance count — measured 397 bytes
-against an empty assembly.
+That is **63× the claimed 20 KB**, and it is not an outlier — it is one ordinary FRC robot.
+
+**Query parameters barely help.** `excludeSuppressed=true` saves 7% (1.17 MB).
+`includeMateFeatures=false` / `includeNonSolids=false` change nothing (they only ever add).
+
+**Our own format-level reduction gets 82.8%** — keeping only visible occurrences with paths and
+transforms rounded to 4 dp yields 215,717 bytes. Still ~10× over the claim, and roughly 54k
+tokens of JSON: far too large to hand a model per call.
+
+**Conclusion: reduction must be semantic, not format-level.** Fetching a "lightweight spatial
+graph" per call does not work at robot scale. The workable shape is the one the original brief's
+own diagram implied but its payload claim ignored — a **local cache plus a query layer**: pull
+the 1.2 MB once, hold it, and answer narrow questions from it ("bounding box of this
+subassembly", "the 8 parts in the intake", "total mass") without ever returning the occurrence
+list. See Open decisions.
+
+**Two mass-properties endpoints time out at 30 s** on a real robot. That is a latency problem
+independent of size, and it rules those endpoints out of any interactive tool call as-is.
 
 ---
 
@@ -135,9 +160,8 @@ against an empty assembly.
 Never grant `OAuth2Delete`. Removing a feature is a *write*, so the copilot never needs Delete,
 and Delete's blast radius is whole documents and workspaces.
 
-**Spike 3a is not finished.** Every assembly on the account has 0 instances, so the payload that
-scales was never exercised. To close it: insert parts into an assembly (a handful of instances is
-enough to establish per-instance cost), then re-run `scripts/spike_3a_payload.py`.
+**Spike 3a is closed** — see Settled facts. A real robot assembly (`1678 2026`) measured 1.2 MB.
+The consequence is an architecture change, not a blocker.
 
 ## Test material available in Onshape
 
@@ -170,6 +194,23 @@ key is very likely one rate-limit bucket (spike 3c will confirm).
 
 **Physics scope.** `motors.py` is done. `stress.py` (beam deflection, safety factors) is
 unstarted and fully unblocked — pure maths, no auth, good work to hand to a student.
+
+**How to replace the falsified "lightweight spatial graph" (decide before Step 5).** Measured
+options, given that the assembly definition is 1.2 MB and 83% format-level reduction still leaves
+215 KB:
+
+- **Cache + query layer (recommended).** Fetch the assembly definition once, hold it in the
+  server, and expose narrow tools that answer questions from it. The model never sees the
+  occurrence list. Costs one 1.2 MB fetch per document per session against a ~1000-request
+  budget, which is affordable; the brief's own architecture diagram already had a "Local State
+  Cache & Data Reducer" box, so this is closer to honouring the design than abandoning it.
+- **Subassembly-level aggregation.** Return 20 subassembly bounding boxes rather than 1,320
+  occurrence transforms. Much smaller, but loses per-part placement.
+- **Never: pass the definition through.** 215 KB is ~54k tokens even after reduction.
+
+Also needs deciding: the two mass-properties endpoints time out at 30 s on a real robot. Either
+raise the timeout for those specific calls, compute mass from the cached `parts` block, or drop
+them from the tool surface.
 
 ---
 

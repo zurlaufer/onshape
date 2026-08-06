@@ -21,3 +21,6 @@ qdrant_storage/
 
 # Spike output — measurements get written up in the README, not committed raw
 scripts/_out/
+
+# Editor
+.vscode/
