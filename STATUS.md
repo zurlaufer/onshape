@@ -24,11 +24,11 @@ tell us the design needs to change. Two of the three spikes are unblocked right 
 |---|---|---|
 | 0 — key hygiene | `.env` ignored before keys hit disk | **PASS** — `.env` untracked, ignored, verified |
 | 1 — live auth | The HMAC signature is accepted by Onshape | **PASS** — 200 on `GET /documents?limit=1` |
-| 2 — MCP wiring | Claude Code ↔ server ↔ Onshape | **PASS (technical)** — tool returns live data via an MCP client; `.mcp.json` present but the round trip through the Claude Code UI has not been confirmed by hand |
-| 3a — payload size | Is the "~20 KB spatial graph" claim real? | **NOT STARTED** — unblocked, assemblies exist |
-| 3b — FeatureScript errors | Can regeneration errors be read programmatically? | **BLOCKED** — needs `OAuth2Write` (see Blockers) |
-| 3c — rate limit ceiling | How much headroom does the retry budget have? | **NOT STARTED** — unblocked |
-| 4 — hardened client | Retry/backoff + signing regression tests | **NOT STARTED** — deliberately after the spikes |
+| 2 — MCP wiring | Claude Code ↔ server ↔ Onshape | **PASS** — `onshape_check_connection` called through the real Claude Code MCP path, returned live data |
+| 3a — payload size | Is the "~20 KB spatial graph" claim real? | **PARTIAL** — the *principle* is confirmed (200:1 vs raw geometry), but the claim itself is untested: every assembly on the account is empty |
+| 3b — FeatureScript errors | Can regeneration errors be read programmatically? | **BLOCKED** — no Feature Studio exists, and creating one is a write |
+| 3c — rate limit ceiling | How much headroom does the retry budget have? | **PASS** — measured; Onshape advertises remaining quota in a header |
+| 4 — hardened client | Retry/backoff + signing regression tests | **NOT STARTED** — now has real numbers to design against |
 
 ---
 
@@ -90,19 +90,54 @@ or for enterprise *Enterprise settings → Developer → API keys* (admin only).
 signature only; `formatdate(usegmt=True)` not `strftime`; encode the query exactly once; always
 insert `/api/{version}`; re-sign on every retry.
 
+**Rate limits — Onshape tells us directly.** Every response carries
+`x-rate-limit-remaining`. Measured 2026-08-05: the budget starts around **1000**, each request
+costs exactly **1**, and **nothing refilled over 30 seconds of idle** — so it is an hourly or
+daily quota, not a per-second throttle. 150 requests at ~20 req/s produced no 429 at all.
+
+Consequences for the Step 4 retry design:
+- Backoff does not have to be purely reactive. Read the header and act *before* hitting 429.
+- The budget is the real constraint, not request rate. A 3-retry compile loop is expensive
+  against ~1000/window.
+- **One key is one budget.** This makes the shared-key question concrete: N students on one key
+  share ~1000 requests, they do not get 1000 each.
+- These spikes alone consumed ~190. The refill window is still unknown — check
+  `x-rate-limit-remaining` at the start of the next session; if it is back near 1000, it
+  refills at least daily. That costs one request instead of a burst.
+
+**Payload sizes, measured 2026-08-05** on `chasis-try1` (a real part studio; all assemblies on
+the account are empty, so the assembly side is still untested):
+
+| What | Bytes |
+|---|---|
+| Lightweight context (bbox + mass props + config) | **2,358** |
+| Feature list — one part studio | **67,318** |
+| Tessellated faces — raw geometry | **470,315** |
+
+The ~200:1 ratio between lightweight context and raw geometry validates the *principle* the
+architecture rests on. The "~20 KB" figure itself remains unverified, because the payload that
+actually scales — the assembly definition, which grows with instance count — measured 397 bytes
+against an empty assembly.
+
 ---
 
 ## Blockers
 
-**Spike 3b needs `OAuth2Write`.** No document currently contains a `FEATURESTUDIO` element, and
-creating or modifying one is a write. The current key is read-only.
+**Spike 3b — two things missing, and the first is the cheap one.**
 
-Two ways forward, to decide when 3b starts:
-- Add `OAuth2Write` to the existing key (still never `OAuth2Delete` — deleting a feature is a
-  write, so the copilot never needs Delete, and its blast radius is whole documents).
-- Or create the Feature Studio by hand in the Onshape UI first, and see how far a read-only
-  spike gets. This probably only reaches the *compile* half; reading regeneration errors is the
-  half that matters and likely needs the write scope anyway.
+1. **No `FEATURESTUDIO` element exists in any document.** Create one by hand in the Onshape UI in
+   a scratch document (`asm-try1`). No API, no scope change, no risk — and it immediately allows
+   testing the *read* half: can we retrieve Feature Studio contents, and is there a structured
+   notices/errors field?
+2. **Writing to it needs `OAuth2Write`.** Reading regeneration errors — the half that actually
+   matters (FM1) — probably needs it too.
+
+Never grant `OAuth2Delete`. Removing a feature is a *write*, so the copilot never needs Delete,
+and Delete's blast radius is whole documents and workspaces.
+
+**Spike 3a is not finished.** Every assembly on the account has 0 instances, so the payload that
+scales was never exercised. To close it: insert parts into an assembly (a handful of instances is
+enough to establish per-instance cost), then re-run `scripts/spike_3a_payload.py`.
 
 ## Test material available in Onshape
 
@@ -152,14 +187,21 @@ wrong NEO figures before they were baked in.
 three issues: 20 API versions behind, a stale tool name in the README, and httpx logging every
 request at INFO.
 
-**2026-08-05 — status check.** Everything re-verified green. Found `.mcp.json` created, four
-scratch documents with assemblies available for spike 3a, and no Feature Studio anywhere — which
-is what blocks 3b. This file created.
+**2026-08-05 — status check, then spikes 3a and 3c.** Everything re-verified green. Gate 2 closed
+properly (tool called through the real Claude Code MCP path). New API keys installed; they carry
+`OAuth2ReadPII`, which the previous ones did not. Ran spike 3c: found Onshape advertises
+`x-rate-limit-remaining`, so backoff can be proactive rather than reactive. Ran spike 3a: the
+raw-geometry ratio confirms the architecture's principle, but every assembly is empty so the
+claim itself is still open.
 
 ---
 
 ## Next action
 
-Run **spike 3a**: fetch bounding boxes, mass properties, and transforms for `asm-try1` and
-measure the actual byte count against the plan's ~20 KB claim. Read-only, unblocked, and it tests
-the assumption the whole data-reduction architecture rests on.
+**You:** create a Feature Studio by hand in `asm-try1`, and put a few parts into one of the
+assemblies. Both are UI actions, no scope change, and between them they unblock the remaining
+half of 3a and the read half of 3b.
+
+**Then:** re-run `scripts/spike_3a_payload.py` for per-instance cost, and probe Feature Studio
+reads for a structured error field. After that, Step 4 (hardened client) can finally be designed
+against measured numbers instead of guesses.
