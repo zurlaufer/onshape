@@ -256,10 +256,21 @@ class _StubClient:
 
 
 class TestCache:
+    """Cache behaviour with the microversion TTL disabled.
+
+    `microversion_ttl=0.0` throughout, on purpose. These tests are about
+    *invalidation* — does a changed microversion refetch, does a corrupt entry
+    recover — and the TTL suppresses the very validator call they need to
+    observe. Left at the default they would still pass, but for the wrong
+    reason: nothing refetches when nothing re-checks. The TTL's own behaviour is
+    covered in tests/test_onshape_client.py, where it is the subject rather than
+    a confound.
+    """
+
     @pytest.mark.asyncio
     async def test_cold_fetch_then_warm_hit(self, raw, tmp_path):
         client = _StubClient(raw)
-        cache = AssemblyCache(tmp_path)
+        cache = AssemblyCache(tmp_path, microversion_ttl=0.0)
 
         first = await cache.get_definition(client, "D", "W", "E")
         assert first["rootAssembly"]["instances"][0]["name"] == ROBOT
@@ -272,9 +283,26 @@ class TestCache:
         assert cache.validator_requests == 2
 
     @pytest.mark.asyncio
+    async def test_ttl_removes_even_the_validator_request(self, raw, tmp_path):
+        """With the TTL on, a repeated question costs nothing at all.
+
+        `currentmicroversion` sits on a 400 bucket — the tightest read budget we
+        have — so this is the call worth eliminating, not just the 1.09 MB one.
+        """
+        client = _StubClient(raw)
+        cache = AssemblyCache(tmp_path, microversion_ttl=60.0)
+
+        await cache.get_definition(client, "D", "W", "E")
+        await cache.get_definition(client, "D", "W", "E")
+
+        assert cache.definition_requests == 1
+        assert cache.validator_requests == 1
+        assert cache.validator_requests_saved == 1
+
+    @pytest.mark.asyncio
     async def test_changed_microversion_invalidates(self, raw, tmp_path):
         client = _StubClient(raw)
-        cache = AssemblyCache(tmp_path)
+        cache = AssemblyCache(tmp_path, microversion_ttl=0.0)
         await cache.get_definition(client, "D", "W", "E")
 
         client.microversion = "MV2"
@@ -282,19 +310,38 @@ class TestCache:
         assert cache.definition_requests == 2
 
     @pytest.mark.asyncio
+    async def test_the_ttl_can_serve_a_stale_microversion(self, raw, tmp_path):
+        """The TTL's cost, stated as a test rather than left as a surprise.
+
+        Inside the window an edit is not noticed. That is the trade taken
+        knowingly against a 400-request ceiling; `force_refresh` is the escape.
+        """
+        client = _StubClient(raw)
+        cache = AssemblyCache(tmp_path, microversion_ttl=60.0)
+        await cache.get_definition(client, "D", "W", "E")
+
+        client.microversion = "MV2"
+        await cache.get_definition(client, "D", "W", "E")
+        assert cache.definition_requests == 1, "the edit is invisible inside the TTL"
+
+        await cache.get_definition(client, "D", "W", "E", force_refresh=True)
+        assert cache.definition_requests == 2, "force_refresh must always see it"
+
+    @pytest.mark.asyncio
     async def test_stale_entries_are_pruned(self, raw, tmp_path):
         client = _StubClient(raw)
-        cache = AssemblyCache(tmp_path)
+        cache = AssemblyCache(tmp_path, microversion_ttl=0.0)
         await cache.get_definition(client, "D", "W", "E")
         client.microversion = "MV2"
         await cache.get_definition(client, "D", "W", "E")
 
+        assert cache.definition_requests == 2, "guard: the refetch must happen"
         assert len(list(tmp_path.glob("D_E_*.json"))) == 1
 
     @pytest.mark.asyncio
     async def test_corrupt_entry_refetches_instead_of_raising(self, raw, tmp_path):
         client = _StubClient(raw)
-        cache = AssemblyCache(tmp_path)
+        cache = AssemblyCache(tmp_path, microversion_ttl=0.0)
         await cache.get_definition(client, "D", "W", "E")
 
         for path in tmp_path.glob("*.json"):

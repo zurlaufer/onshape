@@ -208,8 +208,10 @@ avoid, each with a matching comment in the source:
    appended to the URL by hand; `params=` is never passed to httpx, which would re-encode it.
 4. **Omitting the API version silently selects `v0`, the oldest API** — no error, just
    wrong-shaped responses. `build_path()` always inserts `/api/{version}`.
-5. **Every retry re-signs.** `Date` expires after 5 minutes and nonces must be unique, so
-   signing will live *inside* the Step 4 retry loop, never above it.
+5. **Every retry re-signs.** `Date` expires after 5 minutes and nonces must be unique, so signing
+   lives *inside* the retry loop, never above it. `test_every_retry_re_signs` asserts that three
+   attempts carry three distinct nonces and three distinct signatures — the test exists to keep
+   the signing call from ever being hoisted out of the loop as an "optimisation".
 
 ---
 

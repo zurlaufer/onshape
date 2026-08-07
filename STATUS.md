@@ -1,6 +1,6 @@
 # Project Status
 
-**Last verified: 2026-08-07** — FeatureScript skill with two templates, verified live.
+**Last verified: 2026-08-07** — Step 4 done: hardened client, per-bucket quota governor, 187 tests.
 
 > Maintained by Claude. Updated at the end of any session that changes project state, so picking
 > the project back up doesn't require re-scanning the codebase or re-running discovery. If
@@ -10,18 +10,20 @@
 
 ## Where we are in one paragraph
 
-The walking skeleton is **complete and verified live** through all three gates: signed requests
-reach Onshape, the MCP server runs, and a tool works end to end from Claude Code. The motor
-physics module is built and tested.
+Everything through **Step 4 is complete and verified live**. Signed requests reach Onshape, the
+MCP server runs 5 of its 8 budgeted tools, a 1.09 MB assembly is answered in 308 bytes, two
+FeatureScript templates compile against the real API, and the client now retries, times out and
+rations quota deliberately rather than by accident. 187 offline tests.
 
-**Spike 3a did its job and the news is bad in the useful way: the "~20 KB lightweight spatial
-graph" premise is false.** A real FRC robot assembly is 1.2 MB, and even 83% reduction leaves
-215 KB — far too much to hand a model per call. This does not sink the project, but it does
-replace "fetch a small graph each time" with "cache once, answer narrow queries from it". That
-redesign is the next real decision.
+**The recurring lesson, three times over: measure the specific thing, and do not generalise from
+one sample.** Spike 3b concluded "Onshape never reports why" from one endpoint — a different one
+reports in full. Spike 3c concluded "the budget is ~1000" from one endpoint — quota is
+per-endpoint and the one we depend on most is **~84**. And "mass properties times out" was never
+about Onshape at all; it was our own flat 30 s. Each of those sat in this file as settled fact
+until it was checked.
 
-Spike 3c is done and produced a gift: Onshape advertises remaining quota in a response header,
-so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existing at all.
+The next real work is the third template (plate pocketing), which is the first one that needs
+**face selection** — the fragile query territory the whole validation stack was built for.
 
 ---
 
@@ -35,7 +37,7 @@ so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existi
 | 3a — payload size | Is the "~20 KB spatial graph" claim real? | **DONE — claim FALSIFIED.** A real robot assembly is 1.2 MB, 63× the claim. Requires an architecture change (see Settled facts) |
 | 3b — FeatureScript errors | Can regeneration errors be read programmatically? | **DONE, then REVISED 2026-08-07.** The Feature Studio write path is silent, but the **evaluate endpoint returns full diagnostics** with line/column. A correction loop *is* possible |
 | 3c — rate limit ceiling | How much headroom does the retry budget have? | **PASS** — measured; Onshape advertises remaining quota in a header |
-| 4 — hardened client | Retry/backoff + signing regression tests | **NOT STARTED** — now has real numbers to design against |
+| 4 — hardened client | Retry/backoff + signing regression tests | **PASS** — classified retries, per-bucket quota governor, per-endpoint timeouts, 50 new tests. Mass properties fixed |
 
 ---
 
@@ -43,9 +45,11 @@ so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existi
 
 | Path | State |
 |---|---|
-| `src/api/onshape_client.py` | HMAC signing + signed async requests. **No retry/backoff yet** (Step 4). Verified live. |
+| `src/api/onshape_client.py` | HMAC signing, classified retries, per-endpoint timeouts. Verified live. |
+| `src/api/quota.py` | Per-bucket quota ledger. Observational only — reads the header, never simulates. |
+| `src/api/errors.py` | `OnshapeError` hierarchy; every type carries one actionable sentence. |
 | `src/mcp/server.py` | FastMCP server, **5 tools** of an 8-tool budget. |
-| `src/context/cache.py` | Microversion-keyed disk cache. Cold = 2 requests, warm = 1 (49 bytes). |
+| `src/context/cache.py` | Microversion-keyed disk cache + 60 s TTL. Cold = 2 requests, warm = 1, repeat = **0**. |
 | `src/context/graph.py` | `AssemblyGraph` — named tree + definition dedup. Pure, no I/O. |
 | `src/context/queries.py` | Narrow queries behind a hard 8 KB response ceiling. |
 | `src/physics/motors.py` | Kraken X60 (trapezoidal + FOC), NEO V1.1. Dependency-free. Vendor-verified constants. |
@@ -55,7 +59,8 @@ so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existi
 | `src/skills/apply.py` | Layer 5 probe (real diagnostics) + layer 6 compile, scratch allowlist. |
 | `tests/test_motors.py` | 41 tests, no network or credentials needed. |
 | `tests/test_context_graph.py` | 35 tests over a synthetic fixture. |
-| `tests/test_skill_validation.py` | 59 tests incl. captured Onshape notice shapes; **135 total**. |
+| `tests/test_skill_validation.py` | 59 tests incl. captured Onshape notice shapes. |
+| `tests/test_onshape_client.py` | 50 tests: signing golden vector, retry table, quota, timeouts, TTL. **187 total**. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -69,7 +74,7 @@ so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existi
 ## Verify everything (about 30 seconds)
 
 ```bash
-./.venv/Scripts/python.exe -m pytest tests/ -q          # 41 passed, offline
+./.venv/Scripts/python.exe -m pytest tests/ -q          # 187 passed, offline
 ./.venv/Scripts/python.exe scripts/check_no_print.py    # ok: no print() under src/
 ./.venv/Scripts/python.exe scripts/smoke_auth.py        # Gate 1 passed
 ```
@@ -94,9 +99,22 @@ enforced by `scripts/check_no_print.py`.
 **NEO motor constants.** REV publishes **2.6 N·m / 105 A**. The widely-circulated
 **3.28 N·m / 181 A** figures are *not* REV's. A regression test pins this.
 
-**API key scope.** Keys carry `OAuth2Read` only, by choice (least privilege). Consequences:
+**API key scope — `OAuth2Read` + `OAuth2Write`, never `OAuth2Delete`.** Write is required and in
+use: layer 6 writes a module to a scratch Feature Studio and restores it, verified live.
+
+> This entry previously claimed read-only. That was wrong from the moment the FeatureScript skill
+> started writing — corrected 2026-08-07. A stale *security* fact is worth fixing promptly
+> precisely because someone would reasonably rely on it.
+
 `/users/*` returns profile data and needs `OAuth2ReadPII`, so identity endpoints 403 even on a
-valid signature — this is why the tool reports document visibility rather than a username.
+valid signature — this is why the connection tool reports document visibility rather than a
+username. Writes are additionally confined to scratch documents by `ScratchPolicy`, in code.
+
+**`x-api-version` reports per-endpoint contract resolution, capped at what you asked for.**
+Requesting `v26` comes back as `x-api-version: v16` on `/documents/{did}` — not a downgrade, just
+"this endpoint last changed at v16". Measured 2026-08-07 across v1/v6/v16/v17/v26. It also
+retroactively justifies the v6 → v26 bump: v6 returns 5,622 bytes where v16+ returns 5,629, so the
+old contract really was a different shape. **Requesting the newest version remains correct.**
 
 **Key generation is inside Onshape**, not a separate developer portal: *My account → Developer*,
 or for enterprise *Enterprise settings → Developer → API keys* (admin only).
@@ -105,20 +123,51 @@ or for enterprise *Enterprise settings → Developer → API keys* (admin only).
 signature only; `formatdate(usegmt=True)` not `strftime`; encode the query exactly once; always
 insert `/api/{version}`; re-sign on every retry.
 
-**Rate limits — Onshape tells us directly.** Every response carries
-`x-rate-limit-remaining`. Measured 2026-08-05: the budget starts around **1000**, each request
-costs exactly **1**, and **nothing refilled over 30 seconds of idle** — so it is an hourly or
-daily quota, not a per-second throttle. 150 requests at ~20 req/s produced no 429 at all.
+**Rate limits — quota is PER ENDPOINT, not one budget.** Every response carries
+`x-rate-limit-remaining`, including error responses. Measured 2026-08-07:
 
-Consequences for the Step 4 retry design:
-- Backoff does not have to be purely reactive. Read the header and act *before* hitting 429.
-- The budget is the real constraint, not request rate. A 3-retry compile loop is expensive
-  against ~1000/window.
-- **One key is one budget.** This makes the shared-key question concrete: N students on one key
-  share ~1000 requests, they do not get 1000 each.
-- These spikes alone consumed ~190. The refill window is still unknown — check
-  `x-rate-limit-remaining` at the start of the next session; if it is back near 1000, it
-  refills at least daily. That costs one request instead of a burst.
+| Endpoint | Ceiling |
+|---|---|
+| `POST /partstudios/d/w/e/featurescript` (layer 5) | **~84** |
+| `GET /partstudios/d/w/e/features` | 100 |
+| `GET /assemblies/d/w/e/massproperties` | 250 |
+| `GET /documents/d/w/currentmicroversion` | **400** |
+| `GET /documents` (list) | 1000 |
+| `GET /assemblies/d/w/e` | 1000 |
+| `GET /documents/d/w/elements` | 1500 |
+| `GET /documents/{did}`, `/featurestudios/*`, `.../boundingboxes` | 3000 |
+
+> The earlier note here — *"the budget starts around 1000, each request costs exactly 1"* — was
+> measured on `/documents` alone and generalised to everything. Same mistake spike 3b made.
+> Corrected 2026-08-07.
+
+Two consequences that shaped Step 4:
+
+- **The FeatureScript evaluate endpoint is the scarcest thing we call (~84)** and it is the one a
+  correction loop would hammer hardest. Iterating on a template is far more expensive than
+  reading assemblies.
+- **`currentmicroversion` is 400** and the cache used to spend one per question — the call we made
+  cheap in *bytes* is the one we are poorest in. Fixed by a 60 s TTL; three questions about one
+  assembly now cost 1 validator request instead of 3.
+
+Within one endpoint the behaviour is clean: exactly 1 per request, **no refill over 45 s of
+idling**, and everything back at ceiling the next day — so it is a daily-ish quota, not a
+throttle. Across endpoints the bucket grouping is **not inferable** (some routes clearly share a
+counter, in patterns we could not pin down). **Therefore the governor never simulates: it reads
+the header and acts on it.** Local request counting would be a guess wearing a number's clothes.
+
+**One key is one set of buckets.** N students on one key share ~84 FeatureScript evaluations, not
+84 each.
+
+**A timed-out request still consumes quota.** Measured: 249 → 247 across two completed requests
+plus one that hit a client-side `ReadTimeout`. The server received it and kept computing, so a
+retry pays a second scarce request to duplicate work already in flight. **Read timeouts are
+therefore never retried** — a timeout here means the timeout is configured wrong, not that the
+network flickered. Connect failures never reach the server and *are* retried.
+
+**We have never seen a real 429**, deliberately: provoking one costs ~1000 requests and disables
+whatever depends on that bucket for the window. The reactive path honours `Retry-After` when
+present and backs off exponentially otherwise, and that assumption is marked untested in the code.
 
 **A `Query` parameter's annotation MUST carry a `"Filter"`.** Without one the module fails to
 compile, and the Feature Studio write path reports no reason — so it looks like nothing happened.
@@ -169,8 +218,14 @@ One group fused 90 unrelated items (screws, shims, tread, shafts) and reported a
 used **360 times** instead of 4. Caught only by sanity-checking a live number that looked
 implausible. A regression test now pins it.
 
-**Two mass-properties endpoints time out at 30 s** on a real robot. That is a latency problem
-independent of size, and it rules those endpoints out of any interactive tool call as-is.
+**Mass properties was never a hang — it was our timeout. SOLVED 2026-08-07.** The assembly
+endpoint returns in **40.8 s** with a **1,567-byte** body; the Part Studio one answers in 0.4 s.
+A flat 30 s client timeout was cutting off a slow-but-perfectly-fine endpoint, and the resulting
+`ReadTimeout` was recorded here for two sessions as if the endpoint were unusable. It now has a
+120 s per-endpoint override and works: the Citrus robot reports **50.13 kg** (~110 lb, against
+the 125 lb limit — a sane number, which is the point of checking).
+
+Lesson worth keeping: *a timeout is a statement about us, not about the server.*
 
 **FeatureScript error reporting — measured 2026-08-05, and the news is bad.** Full round trip
 tested against a real Feature Studio: write source, define a feature, insert it into a Part
@@ -224,8 +279,11 @@ achievable after all — through a different endpoint than assumed, and only for
 
 ## Blockers
 
-All three spikes are closed. Nothing is currently blocked on access or credentials — what
-remains are two design decisions (see Open decisions), both consequences of spike findings.
+Nothing is blocked. All spikes closed, all four gates plus Step 4 pass.
+
+The one live constraint worth planning around is **quota, not access**: the FeatureScript
+evaluate bucket is ~84 a day and every template iteration spends one. Template *development* is
+the expensive activity here; template *use* is cheap.
 
 Never grant `OAuth2Delete`. Removing a feature is a *write*, so the copilot never needs Delete,
 and Delete's blast radius is whole documents and workspaces. Confirmed off on the current keys.
@@ -248,11 +306,17 @@ repo goes public (FRC teams often open-source): they identify real documents in 
 
 ## Open decisions
 
-**One shared API key vs. one per student.** Deferred deliberately — costs nothing in code, since
-`from_env()` already reads per-machine and a stdio server is inherently one-process-one-user.
-Per-student keys are a provisioning step, not a feature. Revisit when a second person starts
-using it. Two non-code consequences: attribution can't be reconstructed retroactively, and one
-key is very likely one rate-limit bucket (spike 3c will confirm).
+**One shared API key vs. one per student.** Still deferred, but the case is now sharper than it
+was. Costs nothing in code — `from_env()` already reads per-machine and a stdio server is
+inherently one-process-one-user, so this is a provisioning step, not a feature. What changed:
+**one key is one set of buckets, and the tightest is ~84 FeatureScript evaluations a day.** Two
+students iterating on templates would contend for that immediately. Revisit when a second person
+starts. Attribution still can't be reconstructed retroactively.
+
+**Writes never persist, by decision (2026-08-07).** The copilot proves a template compiles and
+hands back verified FeatureScript; the student applies it. `apply_module()` restores the original
+source in a `finally`. Persisting is a later, separable choice — it needs handling for the
+half-applied case (a write that succeeds, then fails to regenerate), which is why it is not free.
 
 **Physics scope.** `motors.py` is done. `stress.py` (beam deflection, safety factors) is
 unstarted and fully unblocked — pure maths, no auth, good work to hand to a student.
@@ -288,9 +352,8 @@ geometry. Convergent evidence that summaries beat dumps, from people who tried b
 **Hard rule that falls out: the occurrence list never reaches the model.** 215 KB post-reduction
 is ~54k tokens.
 
-Also needs deciding: the two mass-properties endpoints time out at 30 s on a real robot. Either
-raise the timeout for those calls specifically, compute mass from the cached `parts` block, or
-drop them from the tool surface.
+~~Also needs deciding: the two mass-properties endpoints time out at 30 s.~~ **Closed 2026-08-07**
+— it was our timeout, not their latency. 120 s override, works, 1.5 KB response.
 
 **And for spike 3b's finding — no error messages.** The same literature suggests the fallback:
 if Onshape will not say *what* is wrong, generate from a **constrained library of known-good
@@ -322,6 +385,16 @@ returns no error message** for either compile or regeneration — the correction
 specified cannot work as written. Researched cross-domain solutions to the payload problem and
 recorded four composable patterns. `.mcp.json` committed with a macOS path caveat.
 
+**2026-08-07 — Step 4, and three corrections to this file.** Hardened the client: classified
+retries (not blanket), per-endpoint timeouts, a per-bucket quota governor, a typed error
+hierarchy, and 50 offline tests including the signing golden vector that had been missing since
+day one. Four cheap live checks paid for themselves several times over — they overturned the
+quota model (per-endpoint, ~84 for the FeatureScript loop), proved mass properties was our
+timeout rather than Onshape's latency, showed a timed-out request still spends quota, and cleared
+the `x-api-version` mystery. Corrected three stale facts here: the single-budget quota claim, the
+`OAuth2Read`-only scope claim, and the mass-properties write-off. Replaced the hardcoded request
+counts in the tool surface with measured ones — the compile path costs 7, not 5.
+
 **2026-08-05 — status check, then spikes 3a and 3c.** Everything re-verified green. Gate 2 closed
 properly (tool called through the real Claude Code MCP path). New API keys installed; they carry
 `OAuth2ReadPII`, which the previous ones did not. Ran spike 3c: found Onshape advertises
@@ -333,26 +406,31 @@ claim itself is still open.
 
 ## Next action
 
-**FeatureScript skill v1 is done** — templates plus a six-layer validation stack, verified live.
-
-Measured on `asm-try1`:
+**Step 4 is closed.** All four gates plus Step 4 now pass. Measured live on `asm-try1`, 2026-08-07:
 
 | Case | Result |
 |---|---|
-| Hole wider than its tube | Rejected locally, **0 API requests** (confirmed against the quota header) |
+| Hole wider than its tube | Rejected locally, **0 API requests** |
 | Valid params, wrong stated length | Probe returned `"Tube is 0.15 meter but the pattern was computed for 300 mm"` — real geometry, 1 request |
-| Correct params | Probe clean (1 request); full module compiled and Feature Studio restored (5 requests) |
+| `tube_hole_pattern`, correct params | Probe clean (1 request); module compiled and Feature Studio restored (**7** requests) |
+| `gearbox_bore_pattern`, 14T→50T, 2× Kraken | Compiled and restored (7 requests), with the 732 A stall warning |
 | Citrus robot as a write target | Refused at `write_safety`, **0 requests** |
+| Three questions about one assembly | **2 requests total** (was 3) — the TTL removed the validator |
+| Citrus assembly mass properties | **50.13 kg** in 40.8 s — previously a timeout |
 
-Two things remain, neither blocked:
+**The compile path costs 7 requests, not the 5 that was hardcoded.** `apply_module` reads before
+each write and restores at the end. Counts now come from the client's own ledger, so they cannot
+drift from reality again — and a retry is visible in the number rather than hidden by it.
 
-1. **Step 4 — harden the client**: quota-aware proactive backoff using `x-rate-limit-remaining`,
-   and per-endpoint timeouts (the 30 s default is what makes mass properties fail).
-2. **More templates** — the stack made the second one much cheaper than the first.
-   `gearbox_bore_pattern` now ties `src/physics/motors.py` into the geometry: the centre distance
-   is `(N1 + N2) / (2 x DP)`, so the gear ratio *determines* where the bores go, and naming a
-   motor reports the stall torque and the tangential force the bores must react. A third template
-   (plate pocketing) needs face selection, which is the fragile query territory.
+What remains, none of it blocked:
 
-Context layer v2, when wanted: mass properties and transforms. Both currently time out at 30 s on
-a real robot. The cache and graph built here are the foundation either way.
+1. **A third template — plate pocketing.** The first genuinely hard one: it needs **face
+   selection**, i.e. the fragile topological-query territory FM1 warned about. It is the first
+   template that will really exercise layer 5's diagnostics rather than confirm them. Note the
+   cost: that loop runs on the **~84** bucket.
+2. **`stress.py`** — beam deflection and safety factors. Pure maths, no auth, fully unblocked,
+   good work to hand to a student. It would let `gearbox_bore_pattern` *judge* whether a plate
+   survives the 1,515 N it currently only reports.
+3. **Context layer v2** — mass properties are now usable (1.5 KB, 40.8 s). Worth folding into a
+   tool, though 40.8 s is slow for an interactive call, so consider caching it by microversion
+   the way the assembly definition already is.

@@ -48,6 +48,7 @@ from src.api.onshape_client import (
     OnshapeApiClient,
     OnshapeAuthError,
     OnshapeConfigError,
+    OnshapeError,
 )
 from src.context.cache import AssemblyCache
 from src.context.graph import AssemblyGraph
@@ -119,7 +120,15 @@ async def onshape_check_connection() -> str:
     # Zero documents is a pass, not a failure — the 200 is what proves the auth.
     count = len(data.get("items") or [])
     reachable = "at least one document visible" if count else "no documents visible"
-    return f"Authenticated with Onshape at {client.base_url} ({reachable})."
+    answer = f"Authenticated with Onshape at {client.base_url} ({reachable})."
+
+    # Onshape meters each endpoint separately, so this speaks only for the one
+    # we just called — but it is a real answer to "am I about to run out", and
+    # it costs no extra request.
+    remaining = client.quota.remaining("GET", client.build_path("/documents"))
+    if remaining is not None:
+        answer += f" Document-list quota remaining: {remaining}."
+    return answer
 
 
 async def _load_graph(document_id: str, workspace_id: str, element_id: str):
@@ -134,12 +143,38 @@ async def _load_graph(document_id: str, workspace_id: str, element_id: str):
 
 
 def _explain(exc: Exception) -> str:
-    if isinstance(exc, OnshapeConfigError):
-        return f"Not configured: {exc}"
-    if isinstance(exc, OnshapeAuthError):
-        return f"Authentication failed: {exc}"
-    logger.exception("assembly request failed")
+    """Turn a failure into something a student can act on.
+
+    Every `OnshapeError` carries an `advice` line for exactly this moment. The
+    fallback still exposes the exception type, because an unrecognised failure
+    is a bug in us and hiding it would only make it harder to find.
+    """
+    if isinstance(exc, OnshapeError):
+        if not isinstance(exc, (OnshapeConfigError, OnshapeAuthError)):
+            logger.warning("Onshape request failed: %s", exc)
+        return exc.explain()
+    logger.exception("Onshape request failed")
     return f"Onshape request failed: {type(exc).__name__}: {exc}"
+
+
+def _quota_note(client: OnshapeApiClient) -> dict[str, object]:
+    """Surface the quota only when it is worth a student's attention.
+
+    Reporting healthy numbers on every call would be payload spent on nothing.
+    The endpoints that run out are specific and few — the FeatureScript evaluate
+    bucket is roughly 84 — so the warning is worth its bytes when it appears.
+    """
+    tight = {
+        key: state["remaining"]
+        for key, state in client.quota.snapshot().items()
+        if state["ceiling"] and state["remaining"] / state["ceiling"] < 0.2
+    }
+    if not tight:
+        return {}
+    return {"quota_warning": {
+        "low_endpoints": tight,
+        "note": "Onshape meters each endpoint separately; these refill at least daily.",
+    }}
 
 
 @mcp.tool
@@ -303,8 +338,12 @@ async def frc_apply_template(
     warnings = [p.to_dict() for p in problems + source_problems]
 
     # --- Layer 5: Onshape probe, real diagnostics ------------------------
+    # Request counts are measured from the client's own ledger rather than
+    # written down here. The hardcoded numbers this replaces were guesses, and
+    # they were wrong the moment a retry fired.
     try:
         client = get_client()
+        spent_before = client.quota.requests_used
         result = await probe_body(
             client, probe,
             document_id=document_id, workspace_id=workspace_id,
@@ -318,7 +357,7 @@ async def frc_apply_template(
     out: dict = {
         "ok": result.ok,
         "stage": "onshape_probe",
-        "api_requests_used": 1,
+        "api_requests_used": client.quota.requests_used - spent_before,
         "problems": [p.to_dict() for p in result.problems] + warnings,
     }
 
@@ -332,7 +371,6 @@ async def frc_apply_template(
             )
             out["stage"] = "onshape_compile"
             out["ok"] = compiled
-            out["api_requests_used"] = 5
             out["problems"] += [p.to_dict() for p in compile_problems]
             out["feature_studio_restored"] = True
         except WriteRefused as exc:
@@ -341,6 +379,10 @@ async def frc_apply_template(
             out["error"] = str(exc)
         except Exception as exc:  # noqa: BLE001
             return _explain(exc)
+        finally:
+            out["api_requests_used"] = client.quota.requests_used - spent_before
+
+    out.update(_quota_note(client))
 
     if out["ok"]:
         out["featurescript"] = module
