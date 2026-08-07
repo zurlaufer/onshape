@@ -18,6 +18,7 @@ from src.skills.apply import (
     probe_body,
 )
 from src.skills.templates import TEMPLATES, Severity
+from src.skills.templates.gearbox_bore_pattern import GearboxBorePattern
 from src.skills.templates.tube_hole_pattern import TubeHolePattern
 from src.skills.validate import validate_params, validate_source, worst_severity
 
@@ -106,6 +107,143 @@ class TestParameterValidation:
         problems = validate_params("tube_hole_pattern", {**GOOD, "colour": "red"})
         assert errors(problems) == []
         assert any(p.parameter == "colour" for p in problems)
+
+
+GEARBOX = {
+    "driving_teeth": 14,
+    "driven_teeth": 50,
+    "bore_diameter": 12.7,   # 1/2 inch bearing bore
+    "plate_width": 120.0,
+    "plate_height": 90.0,
+}
+
+
+class TestGearboxGeometry:
+    """The centre distance is dictated by the gear pair, not chosen."""
+
+    def test_centre_distance_matches_the_standard_formula(self):
+        """centre = (N1 + N2) / (2 x DP), in inches. Checkable by hand."""
+        template = GearboxBorePattern()
+        expected_in = (14 + 50) / (2 * 20)          # 1.6 inches
+        assert template.centre_distance_mm(GEARBOX) == pytest.approx(expected_in * 25.4)
+        assert template.centre_distance_mm(GEARBOX) == pytest.approx(40.64)
+
+    def test_pitch_diameters(self):
+        driving, driven = GearboxBorePattern().pitch_diameters_mm(GEARBOX)
+        assert driving == pytest.approx(14 / 20 * 25.4)   # 17.78 mm
+        assert driven == pytest.approx(50 / 20 * 25.4)    # 63.50 mm
+
+    def test_finer_pitch_shrinks_the_centre_distance(self):
+        template = GearboxBorePattern()
+        coarse = template.centre_distance_mm(GEARBOX)
+        fine = template.centre_distance_mm({**GEARBOX, "diametral_pitch": 32})
+        assert fine < coarse
+
+    def test_reduction_is_delegated_to_the_physics_module(self):
+        """Reuses reduction_from_stages rather than re-deriving the ratio."""
+        assert GearboxBorePattern().reduction(GEARBOX) == pytest.approx(50 / 14)
+
+
+class TestGearboxValidation:
+    def test_a_sane_gearbox_passes(self):
+        assert errors(validate_params("gearbox_bore_pattern", GEARBOX)) == []
+
+    def test_bores_that_would_intersect_are_rejected(self):
+        """40.64 mm apart cannot hold two 45 mm bores."""
+        problems = validate_params(
+            "gearbox_bore_pattern", {**GEARBOX, "bore_diameter": 45.0})
+        assert any("web" in p.message for p in errors(problems))
+
+    def test_rejection_quotes_the_gear_pair_that_caused_it(self):
+        problems = validate_params(
+            "gearbox_bore_pattern", {**GEARBOX, "bore_diameter": 45.0})
+        message = errors(problems)[0].message
+        assert "14:50" in message and "40.6" in message
+
+    def test_plate_too_narrow_is_rejected(self):
+        problems = validate_params(
+            "gearbox_bore_pattern", {**GEARBOX, "plate_width": 40.0})
+        assert any(p.parameter == "plate_width" for p in errors(problems))
+
+    def test_undercut_warns_but_does_not_block(self):
+        problems = validate_params(
+            "gearbox_bore_pattern", {**GEARBOX, "driving_teeth": 10})
+        assert errors(problems) == []
+        assert any("undercut" in p.message for p in problems)
+
+    def test_oversized_driven_gear_warns_about_overhang(self):
+        problems = validate_params(
+            "gearbox_bore_pattern", {**GEARBOX, "driven_teeth": 80, "plate_height": 60.0})
+        assert any("overhang" in p.message for p in problems)
+
+
+class TestPhysicsIntegration:
+    """Where motors.py stops being a calculator and constrains the CAD."""
+
+    def test_no_motor_means_no_torque_commentary(self):
+        assert all("stall" not in p.message.lower()
+                   for p in validate_params("gearbox_bore_pattern", GEARBOX))
+
+    def test_motor_torque_is_reported_through_the_reduction(self):
+        """2 x Kraken (7.09 N.m) through 50:14 at 95% = 48.1 N.m."""
+        problems = validate_params(
+            "gearbox_bore_pattern",
+            {**GEARBOX, "motor": "kraken_x60", "motor_count": 2})
+        torque = next(p for p in problems if "N.m" in p.message)
+        assert "48.1" in torque.message
+        assert errors(problems) == [], "reporting a load must not block the design"
+
+    def test_tangential_force_is_torque_over_pitch_radius(self):
+        """48.1 N.m / 0.03175 m = 1515 N."""
+        problems = validate_params(
+            "gearbox_bore_pattern",
+            {**GEARBOX, "motor": "kraken_x60", "motor_count": 2})
+        assert any("1,515 N" in p.message for p in problems)
+
+    def test_the_motor_source_url_is_cited(self):
+        """FM6: a student must be able to check the numbers by hand."""
+        problems = validate_params(
+            "gearbox_bore_pattern", {**GEARBOX, "motor": "neo"})
+        assert any("docs.revrobotics.com" in p.message for p in problems)
+
+    def test_stall_current_beyond_the_breaker_warns(self):
+        problems = validate_params(
+            "gearbox_bore_pattern",
+            {**GEARBOX, "motor": "kraken_x60", "motor_count": 2})
+        assert any("40 A breaker" in p.message for p in problems)
+
+    def test_unknown_motor_is_rejected_and_lists_the_real_ones(self):
+        problems = validate_params(
+            "gearbox_bore_pattern", {**GEARBOX, "motor": "kracken"})
+        assert any("kraken_x60" in p.message for p in errors(problems))
+
+    def test_physics_module_never_imports_upward(self):
+        """FM3: src/physics stays readable in isolation. Direction is one-way."""
+        from pathlib import Path
+        physics = Path(__file__).parent.parent / "src" / "physics"
+        for module in physics.glob("*.py"):
+            source = module.read_text(encoding="utf-8")
+            for forbidden in ("src.skills", "src.context", "src.api", "src.mcp", "fastmcp", "httpx"):
+                assert forbidden not in source, f"{module.name} must not depend on {forbidden}"
+
+
+class TestGearboxRendering:
+    def test_generated_source_is_clean(self):
+        template = GearboxBorePattern()
+        assert errors(validate_source(template.render_probe(GEARBOX), is_module=False)) == []
+        assert errors(validate_source(template.render_module(GEARBOX), is_module=True)) == []
+
+    def test_module_documents_the_gear_pair_that_fixed_the_geometry(self):
+        module = GearboxBorePattern().render_module(GEARBOX)
+        assert "14T -> 50T" in module
+        assert "40.6400 mm" in module
+        assert "not a free choice" in module
+
+    def test_probe_and_module_agree_on_the_centre_distance(self):
+        template = GearboxBorePattern()
+        centre = f"{template.centre_distance_mm(GEARBOX):.4f}"
+        assert centre in template.render_probe(GEARBOX)
+        assert centre in template.render_module(GEARBOX)
 
 
 class TestSourceValidation:

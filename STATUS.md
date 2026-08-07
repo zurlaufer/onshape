@@ -1,6 +1,6 @@
 # Project Status
 
-**Last verified: 2026-08-07** — FeatureScript skill v1 built and verified live.
+**Last verified: 2026-08-07** — FeatureScript skill with two templates, verified live.
 
 > Maintained by Claude. Updated at the end of any session that changes project state, so picking
 > the project back up doesn't require re-scanning the codebase or re-running discovery. If
@@ -49,13 +49,13 @@ so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existi
 | `src/context/graph.py` | `AssemblyGraph` — named tree + definition dedup. Pure, no I/O. |
 | `src/context/queries.py` | Narrow queries behind a hard 8 KB response ceiling. |
 | `src/physics/motors.py` | Kraken X60 (trapezoidal + FOC), NEO V1.1. Dependency-free. Vendor-verified constants. |
-| `src/skills/templates/` | `Template` protocol + `tube_hole_pattern`, hand-written and verified. |
+| `src/skills/templates/` | `Template` protocol + **two** templates: `tube_hole_pattern` and `gearbox_bore_pattern`. |
 | `src/skills/validate.py` | Layers 1-4: structural, symbol, parameter, contract. All free. |
 | `src/skills/symbols.py` | Curated std-library symbol table; warnings only, never blocks. |
 | `src/skills/apply.py` | Layer 5 probe (real diagnostics) + layer 6 compile, scratch allowlist. |
 | `tests/test_motors.py` | 41 tests, no network or credentials needed. |
 | `tests/test_context_graph.py` | 35 tests over a synthetic fixture. |
-| `tests/test_skill_validation.py` | 39 tests incl. captured Onshape notice shapes; **115 total**. |
+| `tests/test_skill_validation.py` | 59 tests incl. captured Onshape notice shapes; **135 total**. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -119,6 +119,18 @@ Consequences for the Step 4 retry design:
 - These spikes alone consumed ~190. The refill window is still unknown — check
   `x-rate-limit-remaining` at the start of the next session; if it is back near 1000, it
   refills at least daily. That costs one request instead of a burst.
+
+**A `Query` parameter's annotation MUST carry a `"Filter"`.** Without one the module fails to
+compile, and the Feature Studio write path reports no reason — so it looks like nothing happened.
+Found by bisecting our own gearbox template:
+
+    annotation { "Name" : "Plate", "Filter" : EntityType.BODY }   // compiles
+    annotation { "Name" : "Origin" }                              // FAILS silently
+    definition.origin is Query;
+
+Non-Query parameters (`isLength(...)`) need no filter. This is the second time a hand-written
+template was wrong in a way only Onshape could reveal, which is the argument for keeping layer 6
+in the loop even though layer 5 is now informative.
 
 **`box` is a reserved word in FeatureScript.** `var box = evBox3d(...)` fails with
 `mismatched input 'box' expecting ID`. Found when the layer-5 probe rejected our own
@@ -336,8 +348,11 @@ Two things remain, neither blocked:
 
 1. **Step 4 — harden the client**: quota-aware proactive backoff using `x-rate-limit-remaining`,
    and per-endpoint timeouts (the 30 s default is what makes mass properties fail).
-2. **More templates** — the second one is much cheaper than the first now the stack exists.
-   A gearbox bore pattern would tie `src/physics/motors.py` into the geometry directly.
+2. **More templates** — the stack made the second one much cheaper than the first.
+   `gearbox_bore_pattern` now ties `src/physics/motors.py` into the geometry: the centre distance
+   is `(N1 + N2) / (2 x DP)`, so the gear ratio *determines* where the bores go, and naming a
+   motor reports the stall torque and the tangential force the bores must react. A third template
+   (plate pocketing) needs face selection, which is the fragile query territory.
 
 Context layer v2, when wanted: mass properties and transforms. Both currently time out at 30 s on
 a real robot. The cache and graph built here are the foundation either way.

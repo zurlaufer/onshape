@@ -219,7 +219,7 @@ async def apply_module(
         return False, [Problem(
             Severity.ERROR,
             "Onshape accepted the write but defined no feature, so the module "
-            "did not compile. This path reports no reason — run the probe "
+            "did not compile. This path reports no reason - run the probe "
             "(layer 5) for a diagnostic with a line number.",
             suggestion="Call the probe on the template body first.")]
     finally:
