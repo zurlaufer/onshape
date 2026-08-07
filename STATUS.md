@@ -1,6 +1,6 @@
 # Project Status
 
-**Last verified: 2026-08-06** — context layer v1 built and verified live.
+**Last verified: 2026-08-07** — FeatureScript skill v1 built and verified live.
 
 > Maintained by Claude. Updated at the end of any session that changes project state, so picking
 > the project back up doesn't require re-scanning the codebase or re-running discovery. If
@@ -33,7 +33,7 @@ so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existi
 | 1 — live auth | The HMAC signature is accepted by Onshape | **PASS** — 200 on `GET /documents?limit=1` |
 | 2 — MCP wiring | Claude Code ↔ server ↔ Onshape | **PASS** — `onshape_check_connection` called through the real Claude Code MCP path, returned live data |
 | 3a — payload size | Is the "~20 KB spatial graph" claim real? | **DONE — claim FALSIFIED.** A real robot assembly is 1.2 MB, 63× the claim. Requires an architecture change (see Settled facts) |
-| 3b — FeatureScript errors | Can regeneration errors be read programmatically? | **DONE — partially falsified.** Failure is *detectable* but Onshape returns **no error message**, for either compile or regeneration. It is a validation loop, not a correction loop |
+| 3b — FeatureScript errors | Can regeneration errors be read programmatically? | **DONE, then REVISED 2026-08-07.** The Feature Studio write path is silent, but the **evaluate endpoint returns full diagnostics** with line/column. A correction loop *is* possible |
 | 3c — rate limit ceiling | How much headroom does the retry budget have? | **PASS** — measured; Onshape advertises remaining quota in a header |
 | 4 — hardened client | Retry/backoff + signing regression tests | **NOT STARTED** — now has real numbers to design against |
 
@@ -44,14 +44,18 @@ so backoff can be proactive. Spike 3b remains blocked on a Feature Studio existi
 | Path | State |
 |---|---|
 | `src/api/onshape_client.py` | HMAC signing + signed async requests. **No retry/backoff yet** (Step 4). Verified live. |
-| `src/mcp/server.py` | FastMCP server, **3 tools** of an 8-tool budget. |
+| `src/mcp/server.py` | FastMCP server, **5 tools** of an 8-tool budget. |
 | `src/context/cache.py` | Microversion-keyed disk cache. Cold = 2 requests, warm = 1 (49 bytes). |
 | `src/context/graph.py` | `AssemblyGraph` — named tree + definition dedup. Pure, no I/O. |
 | `src/context/queries.py` | Narrow queries behind a hard 8 KB response ceiling. |
 | `src/physics/motors.py` | Kraken X60 (trapezoidal + FOC), NEO V1.1. Dependency-free. Vendor-verified constants. |
-| `src/skills/` | Empty — FeatureScript work, gated behind spike 3b. |
+| `src/skills/templates/` | `Template` protocol + `tube_hole_pattern`, hand-written and verified. |
+| `src/skills/validate.py` | Layers 1-4: structural, symbol, parameter, contract. All free. |
+| `src/skills/symbols.py` | Curated std-library symbol table; warnings only, never blocks. |
+| `src/skills/apply.py` | Layer 5 probe (real diagnostics) + layer 6 compile, scratch allowlist. |
 | `tests/test_motors.py` | 41 tests, no network or credentials needed. |
-| `tests/test_context_graph.py` | 35 tests over a synthetic fixture; 76 total. |
+| `tests/test_context_graph.py` | 35 tests over a synthetic fixture. |
+| `tests/test_skill_validation.py` | 39 tests incl. captured Onshape notice shapes; **115 total**. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -116,6 +120,10 @@ Consequences for the Step 4 retry design:
   `x-rate-limit-remaining` at the start of the next session; if it is back near 1000, it
   refills at least daily. That costs one request instead of a burst.
 
+**`box` is a reserved word in FeatureScript.** `var box = evBox3d(...)` fails with
+`mismatched input 'box' expecting ID`. Found when the layer-5 probe rejected our own
+hand-written template — which is the layer working as intended. Use `tubeBox` or similar.
+
 **Payload sizes — the "~20 KB spatial graph" claim is FALSIFIED.** Measured 2026-08-05 against
 `1678 2026`, a real Citrus Circuits robot assembly (**1,320 occurrences, 20 subassemblies**):
 
@@ -166,15 +174,39 @@ Studio, read back status. Everything restored afterwards.
 | Is the thrown message returned? | **No.** A `regenError("...")` string appears nowhere in the response |
 | Do *API-level* errors have messages? | **Yes** — e.g. a bad namespace returns a clear `message` field |
 
-**This confirms FM1 and is worse than FM1 predicted.** The plan warned that the compile half is
-the easy half. In fact *neither* half yields a message. What the API provides is a **binary
-pass/fail signal**, not diagnostics.
+**PARTLY SUPERSEDED 2026-08-07 — see below.** The table above is accurate for the *Feature
+Studio write* path. Generalising it to "Onshape never reports why" was wrong: a different
+endpoint reports in full.
 
-So the brief's "intercept compilation errors and feed them back to the LLM for automated
-syntax/query correction" **cannot work as written**. There is nothing to feed back. What is
-achievable is a *validation* loop: generate, detect pass/fail, regenerate on failure — blind
-retry rather than informed correction. Onshape's own editor shows line-numbered errors, so the
-information exists; it is simply not on the documented REST surface.
+**The evaluate endpoint DOES return diagnostics.** Measured 2026-08-07:
+
+    POST /partstudios/d/{did}/w/{wid}/e/{eid}/featurescript
+    {"script": "<lambda>", "libraryVersion": 3029}
+
+It returns a `notices[]` array carrying everything the Feature Studio path withholds:
+
+| Failure | What comes back |
+|---|---|
+| Syntax error | `type: "PARSE"`, message `"no viable alternative at input '+ ;'"`, **line 1 column 52** |
+| Unknown function | `type: "SEMANTIC"`, `PARAMETER_EXPRESSION_UNKNOWN_FUNCTION`, argument `"thisFunctionDoesNotExist"` |
+| Thrown `regenError` | `type: "EXECUTION"`/`"OTHER"`, the thrown text verbatim |
+| **Query matching nothing** | **`"throw query matched nothing"`** — the FM1 error class, with a message |
+
+Note the HTTP status is **200 even on failure**; the errors live in `notices`, so status codes
+must not be used as the signal.
+
+**What it accepts** (probed, not assumed):
+
+- a bare lambda `function(context is Context, queries) { ... }` — **std library available
+  implicitly**, no import needed
+- `import` statements — **rejected**, PARSE error
+- `annotation` / `export const ... = defineFeature(...)` — **rejected**, PARSE error
+
+**Consequence for the design.** A custom feature's `defineFeature` wrapper is fixed boilerplate we
+author once; the *body* is where query logic and therefore real errors live. Validate the body as
+a lambda through this endpoint and we get line-numbered diagnostics for exactly the failures FM1
+warned about, then wrap the verified body and write it. So the correction loop the brief wanted is
+achievable after all — through a different endpoint than assumed, and only for the body.
 
 ---
 
@@ -289,15 +321,23 @@ claim itself is still open.
 
 ## Next action
 
-**Context layer v1 is done** — navigation and search, verified live (1.09 MB → 308 bytes).
+**FeatureScript skill v1 is done** — templates plus a six-layer validation stack, verified live.
+
+Measured on `asm-try1`:
+
+| Case | Result |
+|---|---|
+| Hole wider than its tube | Rejected locally, **0 API requests** (confirmed against the quota header) |
+| Valid params, wrong stated length | Probe returned `"Tube is 0.15 meter but the pattern was computed for 300 mm"` — real geometry, 1 request |
+| Correct params | Probe clean (1 request); full module compiled and Feature Studio restored (5 requests) |
+| Citrus robot as a write target | Refused at `write_safety`, **0 requests** |
 
 Two things remain, neither blocked:
 
-1. **Decide what the FeatureScript skill becomes** now that no error messages are available:
-   a constrained template library validated by a binary pass/fail signal, rather than free-form
-   generation with error-driven correction.
-2. **Step 4 — harden the client**: quota-aware proactive backoff using `x-rate-limit-remaining`,
+1. **Step 4 — harden the client**: quota-aware proactive backoff using `x-rate-limit-remaining`,
    and per-endpoint timeouts (the 30 s default is what makes mass properties fail).
+2. **More templates** — the second one is much cheaper than the first now the stack exists.
+   A gearbox bore pattern would tie `src/physics/motors.py` into the geometry directly.
 
 Context layer v2, when wanted: mass properties and transforms. Both currently time out at 30 s on
 a real robot. The cache and graph built here are the foundation either way.
