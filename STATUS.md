@@ -1,8 +1,7 @@
 # Project Status
 
-**Last verified: 2026-08-09** — First real design job done: a climber gearbox, sized from a
-student's requirement and built into Onshape. Kernel agrees with our arithmetic to 0.0001%.
-279 tests, 13 s.
+**Last verified: 2026-08-10** — Tool surface reshaped around `where`; writes now persist.
+331 tests, ~15 s.
 
 > Maintained by Claude. Updated at the end of any session that changes project state, so picking
 > the project back up doesn't require re-scanning the codebase or re-running discovery. If
@@ -12,10 +11,15 @@ student's requirement and built into Onshape. Kernel agrees with our arithmetic 
 
 ## Where we are in one paragraph
 
-Everything through **Step 4 is complete and verified live**. Signed requests reach Onshape, the
-MCP server runs 5 of its 8 budgeted tools, a 1.09 MB assembly is answered in 308 bytes, two
-FeatureScript templates compile against the real API, and the client now retries, times out and
-rations quota deliberately rather than by accident. 187 offline tests.
+**The project found its niche, and it is not geometry generation.** The FRC community maintains
+37 FeatureScripts that already do what our three templates did, better — and we proved we can
+drive them from the API. What nothing in that list does is model the torque of a rotating-arm
+climber or search gear stacks for shaft clearance. So: **the community owns geometry; this project
+owns the physics that decides the numbers, and verification against the kernel.**
+
+Everything through Step 4 is verified live. Seven MCP tools (~1,688 tokens/request) all take one
+`where` instead of three hex ids. A 1.09 MB assembly answers in 308 bytes. Writes **persist** now,
+inside a boundary enforced in the client itself. 331 offline tests.
 
 **The recurring lesson, three times over: measure the specific thing, and do not generalise from
 one sample.** Spike 3b concluded "Onshape never reports why" from one endpoint — a different one
@@ -24,17 +28,13 @@ per-endpoint and the one we depend on most is **~84**. And "mass properties time
 about Onshape at all; it was our own flat 30 s. Each of those sat in this file as settled fact
 until it was checked.
 
-**The third template is done and face selection was not the wall it looked like.**
-`plate_pocket_pattern` compiled first try — the first template that did, after the first two each
-needed a live bisection. The accumulated rules (a Query parameter needs a Filter, avoid reserved
-words, probe before compiling) are now doing their job.
+The project also stopped only ever asking *"did Onshape accept it?"* and started asking *"is the
+number we told the student true?"* — and for the figures a team cannot eyeball, the answer is yes
+to four decimal places, checked against Onshape's own kernel.
 
-The bigger result is that the project stopped only ever asking *"did Onshape accept it?"* and
-started asking *"is the number we told the student true?"* — and the answer, for the one figure a
-team cannot eyeball, is yes to four decimal places.
-
-**The remaining gap is unchanged and is not technical: nobody has used this.** Thirteen commits of
-verified infrastructure and zero questions from an actual FRC student.
+**The remaining gap is not technical: nobody outside this project has used it.** One real design
+session happened, and reading its transcript reshaped the whole tool surface. That is the loop
+worth repeating — see `FINDINGS.md`.
 
 ---
 
@@ -73,20 +73,23 @@ verified infrastructure and zero questions from an actual FRC student.
 | `src/skills/templates/` | `Template` protocol + **three** templates: `tube_hole_pattern`, `gearbox_bore_pattern`, `plate_pocket_pattern`. |
 | `src/skills/validate.py` | Layers 1-4: structural, symbol, parameter, contract. All free. |
 | `src/skills/symbols.py` | ~130 hand-typed symbols. **Net-negative to date** — see Settled facts. Warnings only. |
-| `src/skills/apply.py` | Layer 5 probe (real diagnostics) + layer 6 compile, scratch allowlist, FSValue decoding. |
+| `src/skills/apply.py` | Probe, compile, **persist** (idempotent, rolls back a failed insert), FSValue decoding. |
 | `scripts/verify_pocket_geometry.py` | **Checks our grams against Onshape's kernel.** 1 request, builds its own test plate. |
 | `scripts/size_climber.py` | The whole sizing argument, offline and free. Run it when mass, arm or motor count changes. |
 | `scripts/verify_plate_geometry.py` | Probes the climber plate before it is committed. 1 request, persists nothing. |
-| `scripts/build_climber_plate.py` | Commits the plate. **Idempotent** — updates the existing feature and repoints its namespace. |
+| `scripts/build_climber_plate.py` | Commits the plate via `persist_feature`. Idempotent; verified live twice. |
+| `scripts/spike_community_featurescript.py` | **Proves community FeatureScripts can be driven.** Leaves nothing behind. |
 | `scripts/inspect_document.py` | Read-only tour of a document: tabs, feature states, empty Feature Studios. Found the stranded `Boom 1`. |
 | `tests/test_motors.py` | 41 tests, no network or credentials needed. |
 | `tests/test_climber.py` | 26 tests. Pins over-centre behaviour and the completing-but-cannot-hold trap. |
 | `tests/test_geartrain.py` | 25 tests. Pins the **bad** stacks explicitly, not only the good ones. |
 | `tests/test_context_graph.py` | 35 tests over a synthetic fixture. |
-| `tests/test_skill_validation.py` | 59 tests incl. captured Onshape notice shapes. |
-| `tests/test_onshape_client.py` | 50 tests: signing golden vector, retry table, quota, timeouts, TTL. |
+| `tests/test_skill_validation.py` | 58 tests incl. captured Onshape notice shapes. |
+| `tests/test_onshape_client.py` | 60 tests: signing golden vector, retry table, quota, timeouts, TTL, **write policy**. |
 | `tests/test_plate_pocket.py` | 26 tests; the mass figure is pinned to a kernel measurement. |
-| `tests/test_mcp_tools.py` | 15 tests on the tool surface itself — the free paths. **279 total, 13 s**. |
+| `tests/test_mcp_tools.py` | 22 tests on the tool surface — the paths that must answer for free. |
+| `tests/test_workspace.py` | 25 tests: URL parsing, `where` resolution, the write boundary. |
+| `tests/test_persist.py` | 11 tests: no restore, repointing, rollback asymmetry. **331 total, ~15 s**. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -100,7 +103,7 @@ verified infrastructure and zero questions from an actual FRC student.
 ## Verify everything (about 30 seconds)
 
 ```bash
-./.venv/Scripts/python.exe -m pytest tests/ -q          # 228 passed, offline
+./.venv/Scripts/python.exe -m pytest tests/ -q          # 331 passed, offline
 ./.venv/Scripts/python.exe scripts/check_no_print.py    # ok: no print() under src/
 ./.venv/Scripts/python.exe scripts/smoke_auth.py        # Gate 1 passed
 ```
