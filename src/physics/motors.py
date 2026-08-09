@@ -104,6 +104,17 @@ class Motor:
         span = self.stall_current_a - self.free_current_a
         return self.free_current_a + (torque_nm / self.stall_torque_nm) * span
 
+    def torque_at_current(self, amps: float) -> float:
+        """Torque (N.m) a current limit allows — the inverse of the above.
+
+        This is the shape a stator current limit takes in a simulation: the
+        controller will not exceed `amps`, so torque is capped even where the
+        speed-based curve would allow more. Clamped at zero, because below the
+        free current the motor is not producing useful torque at all.
+        """
+        span = self.stall_current_a - self.free_current_a
+        return max(0.0, (amps - self.free_current_a) / span * self.stall_torque_nm)
+
     def power_at_rpm(self, rpm: float) -> float:
         """Mechanical output power (W) at a given shaft speed."""
         omega = rpm * 2.0 * math.pi / 60.0
