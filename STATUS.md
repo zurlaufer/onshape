@@ -1,7 +1,8 @@
 # Project Status
 
-**Last verified: 2026-08-09** — Third template done. Face selection works, and our physics now
-checks out against Onshape's kernel to 0.0000%. 213 tests.
+**Last verified: 2026-08-09** — First real design job done: a climber gearbox, sized from a
+student's requirement and built into Onshape. Kernel agrees with our arithmetic to 0.0001%.
+279 tests, 13 s.
 
 > Maintained by Claude. Updated at the end of any session that changes project state, so picking
 > the project back up doesn't require re-scanning the codebase or re-running discovery. If
@@ -63,17 +64,26 @@ verified infrastructure and zero questions from an actual FRC student.
 | `src/context/graph.py` | `AssemblyGraph` — named tree + definition dedup. Pure, no I/O. |
 | `src/context/queries.py` | Narrow queries behind a hard 8 KB response ceiling. |
 | `src/physics/motors.py` | Kraken X60 (trapezoidal + FOC), NEO V1.1. Dependency-free. Vendor-verified constants. |
+| `src/physics/climber.py` | Rotating-arm climber kinematics. Over-centre lever, fold simulation, static-hold sizing. Pure. |
+| `src/physics/geartrain.py` | Spur stacks: centre distances, **the shaft-clearance constraint**, stack search, plate folding. Pure. |
+| `src/skills/climber_plate.py` | One concrete design + the FeatureScript that draws it. Single source of truth for the three climber scripts. |
 | `src/skills/templates/` | `Template` protocol + **three** templates: `tube_hole_pattern`, `gearbox_bore_pattern`, `plate_pocket_pattern`. |
 | `src/skills/validate.py` | Layers 1-4: structural, symbol, parameter, contract. All free. |
 | `src/skills/symbols.py` | ~130 hand-typed symbols. **Net-negative to date** — see Settled facts. Warnings only. |
 | `src/skills/apply.py` | Layer 5 probe (real diagnostics) + layer 6 compile, scratch allowlist, FSValue decoding. |
 | `scripts/verify_pocket_geometry.py` | **Checks our grams against Onshape's kernel.** 1 request, builds its own test plate. |
+| `scripts/size_climber.py` | The whole sizing argument, offline and free. Run it when mass, arm or motor count changes. |
+| `scripts/verify_plate_geometry.py` | Probes the climber plate before it is committed. 1 request, persists nothing. |
+| `scripts/build_climber_plate.py` | Commits the plate. **Idempotent** — updates the existing feature and repoints its namespace. |
+| `scripts/inspect_document.py` | Read-only tour of a document: tabs, feature states, empty Feature Studios. Found the stranded `Boom 1`. |
 | `tests/test_motors.py` | 41 tests, no network or credentials needed. |
+| `tests/test_climber.py` | 26 tests. Pins over-centre behaviour and the completing-but-cannot-hold trap. |
+| `tests/test_geartrain.py` | 25 tests. Pins the **bad** stacks explicitly, not only the good ones. |
 | `tests/test_context_graph.py` | 35 tests over a synthetic fixture. |
 | `tests/test_skill_validation.py` | 59 tests incl. captured Onshape notice shapes. |
 | `tests/test_onshape_client.py` | 50 tests: signing golden vector, retry table, quota, timeouts, TTL. |
 | `tests/test_plate_pocket.py` | 26 tests; the mass figure is pinned to a kernel measurement. |
-| `tests/test_mcp_tools.py` | 15 tests on the tool surface itself — the free paths. **228 total**. |
+| `tests/test_mcp_tools.py` | 15 tests on the tool surface itself — the free paths. **279 total, 13 s**. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -128,6 +138,30 @@ use: layer 6 writes a module to a scratch Feature Studio and restores it, verifi
 `/users/*` returns profile data and needs `OAuth2ReadPII`, so identity endpoints 403 even on a
 valid signature — this is why the connection tool reports document visibility rather than a
 username. Writes are additionally confined to scratch documents by `ScratchPolicy`, in code.
+
+**A chained spur train is limited by shaft clearance, not by reduction.** Found 2026-08-09 while
+sizing the climber gearbox. Stage *i*'s driven gear sits on shaft *i*; shaft *i+1* passes straight
+through that same plane as a bare shaft, at stage *i+1*'s centre distance. So
+
+    centre_distance(stage i+1)  >=  outer_radius(driven gear of stage i) + shaft_radius + clearance
+
+and the two stages are coupled. A high per-stage ratio needs a small pinion, a small pinion gives a
+small centre distance, and a small centre distance is exactly what the *previous* stage's big gear
+cannot tolerate. `11:60 x 11:60` interferes by **4.8 mm** with a 1/2 in hex shaft and a standard
+spacer — it cannot be built, at any plate size, in any layout, because the clashing distance is a
+mesh distance and therefore not free. Driven gears must **grow** along the chain (46 → 54 → 62).
+
+> A layout checker that tests gears against *bearings* will pass all of these. Bearings sit in the
+> plate; shafts run between the plates, and that is where the collision is.
+
+**Restoring a Feature Studio's source strands any custom feature inserted from it.** Found
+2026-08-09 in `asm-try1`: a `boomFeature` sat permanently in `featureStatus: ERROR` because its
+namespace pinned it to a microversion of `Feature Studio 1` whose code the restore step had since
+replaced with the empty header. The definition was gone, so the feature could never regenerate
+again. Layer 6 is *source*-reverting, not *effect*-reverting — it undoes what it wrote, not what
+someone did with it while it was there. Deleting the stranded feature is a plain write
+(`DELETE /partstudios/.../features/featureid/{id}` returned 200 on `OAuth2Write`); `OAuth2Delete`
+is still not needed and still not granted.
 
 **`x-api-version` reports per-endpoint contract resolution, capped at what you asked for.**
 Requesting `v26` comes back as `x-api-version: v16` on `/documents/{did}` — not a downgrade, just
@@ -373,6 +407,19 @@ Four scratch documents, each with a Part Studio, an Assembly, and a BOM. Enough 
 These are IDs, not secrets — they are useless without a key. Still worth a thought before this
 repo goes public (FRC teams often open-source): they identify real documents in your account.
 
+`asm-try1` is the one the copilot may write to — it is the default in `ScratchPolicy`
+(`src/skills/apply.py`). The table above records only its assembly, but the scripts address its
+other tabs by id too, so all of them are listed here:
+
+| Tab | elementId | Used by |
+|---|---|---|
+| `Part Studio 1` | `4fa46792842ff31b21179dad` | `verify_pocket_geometry.py`, `spike_fs_evaluate.py` — the Part Studio templates are evaluated against |
+| `Assembly 1` | `93e19e3cd9ed26c515a64429` | spike 3a, `onshape_assembly_overview` |
+| `Feature Studio 1` | `ec66031db7115bc25dd64e88` | layer-6 compile target; source is written and then restored |
+| `BOM : Assembly 1` | `eea8859dc1c9f4ec0d35db8a` | — |
+| `Gearbox` | `9667e7d938f0d5482922646e` | Climber gearbox plate, built 2026-08-09 |
+| `Climber Gearbox` | `dadd16bcc882a51712fadd5b` | Feature Studio holding `climberGearboxPlate`. **Source must not be restored** — the inserted feature is pinned to its microversion |
+
 ---
 
 ## Open decisions
@@ -483,6 +530,46 @@ properly (tool called through the real Claude Code MCP path). New API keys insta
 `x-rate-limit-remaining`, so backoff can be proactive rather than reactive. Ran spike 3a: the
 raw-geometry ratio confirms the architecture's principle, but every assembly is empty so the
 claim itself is still open.
+
+**2026-08-09 — scratch document tidied, gearbox tab opened.** Inspecting `asm-try1` turned up a
+`boomFeature` stuck in `ERROR` since some earlier layer-6 run: its Feature Studio definition had
+been restored out from under it. Deleted it, so `Part Studio 1` regenerates clean (`Sketch 1`,
+`Extrude 1`, both OK) and template probes no longer run against a document carrying a permanent
+error. Recorded the residue as a settled fact — source-reverting is not effect-reverting. Wrote
+`asm-try1`'s per-tab element ids into this file; two scripts already hardcoded the Part Studio id
+that was never documented.
+
+**Then the first real design job, and the first one driven by a student's requirement rather than
+by the codebase.** A rotating-arm climber: 60 kg robot, pivot at the frame edge, CoM at the frame
+centre, 90° fold in 0.5 s, Kraken X60, ratchet holding the static load. Three corrections came out
+of it, each of which would have been expensive in aluminium:
+
+1. **Putting the robot's mass at the pivot models a different machine.** With the CoM 350 mm
+   behind the pivot the assembly is a pendulum about the hook, so it hangs with its CoM below the
+   bar and the fold *shrinks* that radius — the shrink is the lift. Peak torque drops 235 → 206
+   N·m and moves from the end of the stroke to the middle, then unloads to 50 N·m. Over-centre.
+2. **A swing simulation that "passes" can still describe a climber that falls.** One Kraken
+   reached 90° at G=110 on momentum while able to hold only 0.92× of the load. Simulating the
+   motion answers a different question from sizing the hold; both have to be asked.
+3. **The chain shaft-clearance constraint above**, which killed the chosen 11:60 × 11:60 × 12:60
+   outright.
+
+Final: `11:46 × 11:54 × 11:62` = 115.7:1, two Kraken X60 FOC at 80 A, 0.40 s, 1.46× torque margin,
+86.15 × 86.68 × 6.35 mm plate, four 28.575 mm bores for 1/2 in hex bearings. Probed before
+committing — Onshape's kernel measured 31,128.5100 mm³ against 31,128.4796 mm³ predicted,
+**0.0001%**. The probe also caught `box` as a reserved word, a rule already in this file, first try.
+
+All of it then moved out of scratch and into the repo: `src/physics/climber.py`,
+`src/physics/geartrain.py`, `src/skills/climber_plate.py`, four scripts and 51 tests. The two
+superseded models were **not** carried over — the mass-at-the-pivot climber and the
+gears-versus-bearings layout check are both wrong, and a repo is where wrong models go to be
+believed later. What they taught is in the tests, which pin the bad cases by name.
+
+Two costs worth naming. The suite went 5.6 s → 29 s on the first pass, which is a real tax on a
+project whose tests are meant to be run constantly; splitting shape from orientation in
+`fold_layout` and giving `is_buildable` a path that does not format failure strings brought it to
+13 s. And the build script's first drift check was an absolute 1e-3 mm³, which the kernel fails by
+rounding on any part this size — tolerances against a CAD kernel have to be relative.
 
 ---
 
