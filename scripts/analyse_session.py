@@ -182,6 +182,14 @@ def report(data: dict) -> None:
 
 
 def main(argv: list[str]) -> int:
+    # The prompts are quoted verbatim and this project's user writes Hebrew;
+    # the Windows console default (cp1252) turns that into question marks, and
+    # a report that garbles what the person actually said is worse than useless.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):  # pragma: no cover - odd streams
+        pass
+
     prefix = argv[1] if len(argv) > 1 else None
     path = find_transcript(prefix)
     if path is None:

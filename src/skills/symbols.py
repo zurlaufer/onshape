@@ -41,7 +41,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["is_known_symbol", "known_symbols"]
+__all__ = [
+    "is_known_symbol",
+    "is_rejected",
+    "known_symbols",
+    "observe_compiled",
+    "observe_rejected",
+]
 
 _FIXTURE = Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "fs_symbols.json"
 
@@ -87,10 +93,43 @@ _BUILTIN: frozenset[str] = frozenset({
 })
 
 
+#: Names Onshape has confirmed by compiling them, and names it has rejected.
+#: Learned from use rather than extracted, the way `QuotaLedger` learns ceilings:
+#: zero cost, correct by construction, and it improves every time the probe runs.
+#: This is the answer to the extractor the old docstring promised and nobody
+#: wrote — and it matters now only because the model authors FeatureScript
+#: again, which it did not when this layer was declared dead.
+_OBSERVED: set[str] = set()
+_REJECTED: set[str] = set()
+
+
+def observe_compiled(names: set[str] | frozenset[str]) -> None:
+    """Every name in a body Onshape accepted is a name that exists."""
+    added = {n for n in names if n not in _OBSERVED}
+    if added:
+        _OBSERVED.update(added)
+        known_symbols.cache_clear()
+        logger.debug("learned %d symbol(s) from a compiling body", len(added))
+
+
+def observe_rejected(name: str) -> None:
+    """A name Onshape named in PARAMETER_EXPRESSION_UNKNOWN_FUNCTION.
+
+    A fact, not a guess — worth more than the whole hand-typed list below.
+    """
+    if name and name not in _REJECTED:
+        _REJECTED.add(name)
+        logger.info("Onshape rejected the symbol %r", name)
+
+
+def is_rejected(name: str) -> bool:
+    return name in _REJECTED
+
+
 @lru_cache(maxsize=1)
 def known_symbols() -> frozenset[str]:
     """Curated builtins, plus the extracted fixture when present."""
-    symbols = set(_BUILTIN)
+    symbols = set(_BUILTIN) | _OBSERVED
     try:
         if _FIXTURE.is_file():
             extracted = json.loads(_FIXTURE.read_text(encoding="utf-8"))

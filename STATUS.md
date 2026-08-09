@@ -1,7 +1,7 @@
 # Project Status
 
-**Last verified: 2026-08-10** — Tool surface reshaped around `where`; writes now persist.
-331 tests, ~15 s.
+**Last verified: 2026-08-10** — Tool surface reshaped around `where`; writes persist; the
+probe is cached against a ~100/day bucket. 350 tests, ~16 s.
 
 > Maintained by Claude. Updated at the end of any session that changes project state, so picking
 > the project back up doesn't require re-scanning the codebase or re-running discovery. If
@@ -72,7 +72,8 @@ worth repeating — see `FINDINGS.md`.
 | `src/skills/climber_plate.py` | One concrete design + the FeatureScript that draws it. Single source of truth for the three climber scripts. |
 | `src/skills/templates/` | `Template` protocol + **three** templates: `tube_hole_pattern`, `gearbox_bore_pattern`, `plate_pocket_pattern`. |
 | `src/skills/validate.py` | Layers 1-4: structural, symbol, parameter, contract. All free. |
-| `src/skills/symbols.py` | ~130 hand-typed symbols. **Net-negative to date** — see Settled facts. Warnings only. |
+| `src/skills/symbols.py` | ~130 curated symbols **plus names learned from every probe**. Warnings only. |
+| `src/skills/probe_cache.py` | Hash-keyed probe cache + the worked-example corpus. Protects the ~100/day bucket. |
 | `src/skills/apply.py` | Probe, compile, **persist** (idempotent, rolls back a failed insert), FSValue decoding. |
 | `scripts/verify_pocket_geometry.py` | **Checks our grams against Onshape's kernel.** 1 request, builds its own test plate. |
 | `scripts/size_climber.py` | The whole sizing argument, offline and free. Run it when mass, arm or motor count changes. |
@@ -80,6 +81,9 @@ worth repeating — see `FINDINGS.md`.
 | `scripts/build_climber_plate.py` | Commits the plate via `persist_feature`. Idempotent; verified live twice. |
 | `scripts/spike_community_featurescript.py` | **Proves community FeatureScripts can be driven.** Leaves nothing behind. |
 | `scripts/inspect_document.py` | Read-only tour of a document: tabs, feature states, empty Feature Studios. Found the stranded `Boom 1`. |
+| `scripts/analyse_session.py` | **What a real session actually did.** Offline; reads the transcript. |
+| `CLAUDE.md` | Always loaded, ~1,035 tokens. Only facts that change behaviour. |
+| `FINDINGS.md` | What we learned when someone used it, and what changed. |
 | `tests/test_motors.py` | 41 tests, no network or credentials needed. |
 | `tests/test_climber.py` | 26 tests. Pins over-centre behaviour and the completing-but-cannot-hold trap. |
 | `tests/test_geartrain.py` | 25 tests. Pins the **bad** stacks explicitly, not only the good ones. |
@@ -89,7 +93,8 @@ worth repeating — see `FINDINGS.md`.
 | `tests/test_plate_pocket.py` | 26 tests; the mass figure is pinned to a kernel measurement. |
 | `tests/test_mcp_tools.py` | 22 tests on the tool surface — the paths that must answer for free. |
 | `tests/test_workspace.py` | 25 tests: URL parsing, `where` resolution, the write boundary. |
-| `tests/test_persist.py` | 11 tests: no restore, repointing, rollback asymmetry. **331 total, ~15 s**. |
+| `tests/test_persist.py` | 11 tests: no restore, repointing, rollback asymmetry. |
+| `tests/test_probe_cache.py` | 19 tests: hashing, cache hits, learned symbols, the corpus. **350 total**. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -103,7 +108,7 @@ worth repeating — see `FINDINGS.md`.
 ## Verify everything (about 30 seconds)
 
 ```bash
-./.venv/Scripts/python.exe -m pytest tests/ -q          # 331 passed, offline
+./.venv/Scripts/python.exe -m pytest tests/ -q          # 350 passed, offline
 ./.venv/Scripts/python.exe scripts/check_no_print.py    # ok: no print() under src/
 ./.venv/Scripts/python.exe scripts/smoke_auth.py        # Gate 1 passed
 ```

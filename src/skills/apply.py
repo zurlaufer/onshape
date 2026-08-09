@@ -27,6 +27,7 @@ No `print()` — stdout is the MCP protocol channel.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,12 +41,15 @@ from src.api.onshape_client import OnshapeApiClient
 # the one actually raised.
 from src.api.write_policy import WritePolicy, WriteRefused
 
+from .probe_cache import ProbeCache, body_digest
+from .symbols import observe_compiled, observe_rejected
 from .templates import Problem, Severity
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "PersistResult",
+    "ProbeCache",
     "ProbeResult",
     "WritePolicy",
     "WriteRefused",
@@ -183,6 +187,11 @@ def decode_fsvalue(node: Any) -> Any:
     return decode_fsvalue(inner) if isinstance(inner, (list, dict)) else inner
 
 
+#: Identifiers in call position — the same crude pattern `validate.py` uses.
+#: Good enough to feed an observation, which is all it does.
+_CALLED = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(")
+
+
 async def probe_body(
     client: OnshapeApiClient,
     body: str,
@@ -190,12 +199,29 @@ async def probe_body(
     document_id: str,
     workspace_id: str,
     part_studio_id: str,
+    cache: ProbeCache | None = None,
 ) -> ProbeResult:
     """Layer 5: evaluate a bare lambda and translate Onshape's diagnostics.
 
-    Read-only — nothing is persisted, so this deliberately does not consult the
-    scratch allowlist. Costs one request.
+    Read-only — nothing is persisted, so no write check applies. Costs one
+    request from the scarcest bucket we have (~100/day, shared), which is why a
+    cache is consulted first and why every answer teaches `symbols.py`
+    something.
     """
+    digest = body_digest(
+        body, target=f"{document_id}/{workspace_id}/{part_studio_id}",
+        library_version=LIBRARY_VERSION)
+
+    if cache is not None:
+        cached = cache.get(digest)
+        if cached is not None:
+            return ProbeResult(
+                ok=cached["ok"],
+                problems=[Problem(**{**p, "severity": Severity(p["severity"])})
+                          for p in cached.get("problems", [])],
+                value=cached.get("value"),
+            )
+
     response = await client.post(
         f"/partstudios/d/{document_id}/w/{workspace_id}/e/{part_studio_id}/featurescript",
         json_body={"script": body, "libraryVersion": LIBRARY_VERSION},
@@ -210,6 +236,23 @@ async def probe_body(
     if ok:
         result = payload.get("result") or {}
         value = decode_fsvalue(result.get("value"))
+
+    # Every answer is evidence about the language, and it cost a scarce request
+    # either way. A body that compiled proves its names exist; a rejection names
+    # one that does not.
+    if ok:
+        observe_compiled(set(_CALLED.findall(body)))
+    for problem in problems:
+        match = re.search(r"Unknown function '([^']+)'", problem.message)
+        if match:
+            observe_rejected(match.group(1))
+
+    if cache is not None:
+        cache.put(digest, {
+            "ok": ok, "value": value,
+            "problems": [{**p.to_dict(), "severity": p.severity.value}
+                         for p in problems],
+        })
 
     logger.debug("probe: ok=%s notices=%d", ok, len(notices))
     return ProbeResult(ok=ok, problems=problems, value=value)

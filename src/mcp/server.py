@@ -56,6 +56,7 @@ from src.context.graph import AssemblyGraph
 from src.context.queries import assembly_overview, find_parts, fit_response
 from src.context.workspace import Target, Workspace, WorkspaceError
 from src.skills.apply import (
+    ProbeCache,
     apply_module,
     ensure_feature_studio,
     persist_feature,
@@ -82,6 +83,9 @@ mcp = FastMCP("frc-cad-copilot")
 _client: OnshapeApiClient | None = None
 _cache = AssemblyCache()
 _workspace = Workspace.load()
+# The FeatureScript bucket is ~100/day and shared. Iteration re-probes
+# near-identical bodies constantly, so an identical one costs nothing.
+_probes = ProbeCache()
 
 
 def _resolve(where: str, *, expect: str | None = None) -> Target:
@@ -142,9 +146,6 @@ async def onshape_check_connection() -> str:
 
     # Zero documents is a pass, not a failure — the 200 is what proves the auth.
     count = len(data.get("items") or [])
-    reachable = "at least one document visible" if count else "no documents visible"
-    answer = f"Authenticated with Onshape at {client.base_url} ({reachable})."
-
     payload: dict[str, object] = {
         "authenticated": True,
         "base_url": client.base_url,
@@ -323,6 +324,7 @@ async def frc_probe_featurescript(where: str, body: str) -> str:
             document_id=target.document_id,
             workspace_id=target.wvm_id,
             part_studio_id=target.element_id or "",
+            cache=_probes,
         )
     except Exception as exc:  # noqa: BLE001
         return _explain(exc)
