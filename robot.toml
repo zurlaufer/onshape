@@ -1,0 +1,72 @@
+# What the copilot knows about, and where it may write.
+#
+# Committed on purpose: one person adds a subsystem and the whole team gets it.
+# These are document ids, not secrets — they are useless without an API key —
+# but they do identify real documents, so scrub this before open-sourcing the
+# repo. Same treatment as .mcp.json.
+#
+# `name`      what a student says: onshape_assembly_overview(where="Intake")
+# `url`       copied from the browser address bar with that tab open.
+#             Each tab has its own /e/... — copying from the wrong tab is the
+#             single most common mistake, which is what `kind` guards against.
+# `kind`      partstudio | assembly | featurestudio. Optional but worth setting:
+#             it lets a tool refuse a mismatch instead of returning a 400.
+# `writable`  THE WRITE BOUNDARY. Enforced in the client, so no code path can
+#             route around it. A document must not be marked both ways.
+#
+# Anything not listed here can still be reached by pasting a URL — but it will
+# be read-only, because writability comes from this file alone.
+
+# ---------------------------------------------------------------- the robot
+# The season assembly. Read-only, always: this is a real Citrus Circuits robot
+# and a copilot that can write into a team's robot the week before a
+# competition is an incident waiting to happen.
+
+[[target]]
+name = "robot"
+url = "https://cad.onshape.com/documents/8d51b49e4b833c57f7d33bf0/w/b6722fcc07bf8d271ff14e47/e/57419d060d54790668e1b5ec"
+kind = "assembly"
+writable = false
+
+[[target]]
+name = "robot parts"
+url = "https://cad.onshape.com/documents/8d51b49e4b833c57f7d33bf0/w/b6722fcc07bf8d271ff14e47/e/5c9a297fdb631e7177684001"
+kind = "partstudio"
+writable = false
+
+# ------------------------------------------------------------- scratch space
+# Development documents. Safe to write to, safe to break.
+
+[[target]]
+name = "scratch"
+url = "https://cad.onshape.com/documents/e424515893d4f1ab8b23e5c4/w/65294e9343b8524f94ad5093/e/4fa46792842ff31b21179dad"
+kind = "partstudio"
+writable = true
+
+[[target]]
+name = "scratch assembly"
+url = "https://cad.onshape.com/documents/e424515893d4f1ab8b23e5c4/w/65294e9343b8524f94ad5093/e/93e19e3cd9ed26c515a64429"
+kind = "assembly"
+writable = true
+
+[[target]]
+name = "scratch studio"
+url = "https://cad.onshape.com/documents/e424515893d4f1ab8b23e5c4/w/65294e9343b8524f94ad5093/e/ec66031db7115bc25dd64e88"
+kind = "featurestudio"
+writable = true
+
+# The climber gearbox, built 2026-08-09. Its Feature Studio source must never
+# be restored: the inserted feature is pinned to the microversion that defined
+# it, and restoring strands it in ERROR permanently.
+
+[[target]]
+name = "gearbox"
+url = "https://cad.onshape.com/documents/e424515893d4f1ab8b23e5c4/w/65294e9343b8524f94ad5093/e/9667e7d938f0d5482922646e"
+kind = "partstudio"
+writable = true
+
+[[target]]
+name = "gearbox studio"
+url = "https://cad.onshape.com/documents/e424515893d4f1ab8b23e5c4/w/65294e9343b8524f94ad5093/e/dadd16bcc882a51712fadd5b"
+kind = "featurestudio"
+writable = true

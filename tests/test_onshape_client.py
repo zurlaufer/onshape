@@ -35,6 +35,7 @@ from src.api.onshape_client import (
     generate_nonce,
 )
 from src.api.quota import QuotaLedger, bucket_key
+from src.api.write_policy import WritePolicy, WriteRefused, document_id_in
 from src.context.cache import AssemblyCache
 
 ACCESS = "TESTACCESSKEY"
@@ -45,6 +46,11 @@ FROZEN_NONCE = "abcdefghijklmnopqrstuvwxy"
 
 def make_client(**kwargs) -> OnshapeApiClient:
     kwargs.setdefault("max_retries", 2)
+    # Transport tests POST to invented document ids, which the write policy
+    # rightly refuses. Turn it off here and test it deliberately in
+    # TestWritePolicy below, rather than letting every test depend on the
+    # contents of robot.toml.
+    kwargs.setdefault("write_policy", WritePolicy(enforce=False))
     return OnshapeApiClient(ACCESS, SECRET, **kwargs)
 
 
@@ -593,3 +599,100 @@ class TestErrors:
         Onshape stopped us. Different advice, so different types."""
         assert not issubclass(OnshapeQuotaExhausted, OnshapeRateLimitError)
         assert not issubclass(OnshapeRateLimitError, OnshapeQuotaExhausted)
+
+
+# --------------------------------------------------------------------------
+# Write policy — enforced in the client, not in a caller
+# --------------------------------------------------------------------------
+
+
+SCRATCH = "aaaaaaaaaaaaaaaaaaaaaaaa"
+ROBOT = "bbbbbbbbbbbbbbbbbbbbbbbb"
+
+
+def guarded(**kwargs) -> OnshapeApiClient:
+    kwargs.setdefault("write_policy", WritePolicy(allowed=frozenset({SCRATCH})))
+    return OnshapeApiClient(ACCESS, SECRET, max_retries=0, **kwargs)
+
+
+class TestDocumentIdInPath:
+    def test_both_spellings_of_the_path(self):
+        """Onshape writes /documents/{id} and /d/{id} in different places."""
+        assert document_id_in(f"/api/v26/documents/{SCRATCH}") == SCRATCH
+        assert document_id_in(
+            f"/api/v26/partstudios/d/{SCRATCH}/w/cccccccccccccccccccccccc") == SCRATCH
+
+    def test_a_path_with_no_document_yields_none(self):
+        assert document_id_in("/api/v26/documents") is None
+
+
+class TestWritePolicy:
+    @respx.mock
+    async def test_a_write_outside_the_allowlist_never_reaches_the_wire(self):
+        """The whole point: refused before signing, before sending."""
+        route = respx.post("https://cad.onshape.com").mock(
+            return_value=httpx.Response(200, json={}))
+        async with guarded() as client:
+            with pytest.raises(WriteRefused, match="not marked writable"):
+                await client.post(f"/partstudios/d/{ROBOT}/w/x/e/y/features",
+                                  json_body={})
+        assert route.call_count == 0
+
+    @respx.mock
+    async def test_DELETE_is_guarded_too(self):
+        """The gap this class exists to close.
+
+        In the first real session the model issued a raw DELETE through the
+        client and got 200. It happened to check a policy first, in its own
+        script, voluntarily. Courtesy is not enforcement.
+        """
+        route = respx.delete("https://cad.onshape.com").mock(
+            return_value=httpx.Response(200, json={}))
+        async with guarded() as client:
+            with pytest.raises(WriteRefused):
+                await client.request(
+                    "DELETE", f"/partstudios/d/{ROBOT}/w/x/e/y/features/featureid/z")
+        assert route.call_count == 0
+
+    @respx.mock
+    async def test_writes_to_an_allowed_document_go_through(self):
+        route = respx.post("https://cad.onshape.com").mock(
+            return_value=httpx.Response(200, json={}))
+        async with guarded() as client:
+            await client.post(f"/partstudios/d/{SCRATCH}/w/x/e/y/features",
+                              json_body={})
+        assert route.call_count == 1
+
+    @respx.mock
+    async def test_reads_are_never_blocked(self):
+        """A read-only copilot on a team's robot is the normal case."""
+        route = respx.get("https://cad.onshape.com").mock(
+            return_value=httpx.Response(200, json={}))
+        async with guarded() as client:
+            await client.get(f"/assemblies/d/{ROBOT}/w/x/e/y")
+        assert route.call_count == 1
+
+    @respx.mock
+    async def test_a_path_with_no_document_is_allowed(self):
+        """It cannot modify a document, so there is nothing to guard."""
+        route = respx.post("https://cad.onshape.com").mock(
+            return_value=httpx.Response(200, json={}))
+        async with guarded() as client:
+            await client.post("/some/global/endpoint", json_body={})
+        assert route.call_count == 1
+
+    def test_the_refusal_names_what_is_writable(self):
+        """A refusal that does not say what would work is a dead end."""
+        policy = WritePolicy(allowed=frozenset({SCRATCH}))
+        with pytest.raises(WriteRefused) as caught:
+            policy.check("POST", f"/api/v26/partstudios/d/{ROBOT}/w/x")
+        assert SCRATCH in str(caught.value)
+        assert caught.value.advice
+
+    def test_enforce_false_is_only_a_test_escape(self):
+        WritePolicy(enforce=False).check("DELETE", f"/api/v26/documents/{ROBOT}")
+
+    def test_env_override_adds_documents(self, monkeypatch):
+        monkeypatch.setenv("FRC_SCRATCH_DOCUMENT_IDS", f"{ROBOT}, {SCRATCH}")
+        policy = WritePolicy.from_manifest(workspace=None)
+        assert ROBOT in policy.allowed and SCRATCH in policy.allowed

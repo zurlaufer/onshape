@@ -41,6 +41,7 @@ from .errors import (
     OnshapeTimeoutError,
 )
 from .quota import QuotaLedger, bucket_key
+from .write_policy import WritePolicy, WriteRefused
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ __all__ = [
     "OnshapeServerError",
     "OnshapeTimeoutError",
     "QuotaLedger",
+    "WritePolicy",
+    "WriteRefused",
     "build_auth_headers",
     "generate_nonce",
 ]
@@ -229,6 +232,7 @@ class OnshapeApiClient:
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         max_retries: int = DEFAULT_MAX_RETRIES,
         quota: QuotaLedger | None = None,
+        write_policy: WritePolicy | None = None,
     ) -> None:
         if not access_key or not secret_key:
             raise OnshapeConfigError(
@@ -242,6 +246,11 @@ class OnshapeApiClient:
         self.max_retries = max(0, max_retries)
         #: Reports what calls actually cost, so tools stop hardcoding guesses.
         self.quota = quota if quota is not None else QuotaLedger()
+        #: Enforced here rather than in a caller, because a guard you have to
+        #: remember to call is one that eventually is not called.
+        self.write_policy = (
+            write_policy if write_policy is not None else WritePolicy.from_manifest()
+        )
         # Connect and pool waits stay short regardless of the per-endpoint read
         # timeout: a slow *endpoint* is normal here, a slow *handshake* is not.
         self._client = httpx.AsyncClient(
@@ -382,6 +391,11 @@ class OnshapeApiClient:
         # Encode exactly once: this same string is both signed and sent.
         query_string = urlencode(query, doseq=True) if query else ""
         api_path = self.build_path(path)
+
+        # Before anything is signed or sent. The document is read out of the
+        # path, so no caller can reach Onshape without passing this.
+        self.write_policy.check(method, api_path)
+
         url = f"{self.base_url}{api_path}"
         if query_string:
             url = f"{url}?{query_string}"
