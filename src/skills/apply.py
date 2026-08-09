@@ -49,13 +49,47 @@ __all__ = [
     "ProbeResult",
     "WritePolicy",
     "WriteRefused",
+    "COPILOT_STUDIO_NAME",
     "decode_fsvalue",
+    "ensure_feature_studio",
     "probe_body",
     "apply_module",
     "persist_feature",
 ]
 
 LIBRARY_VERSION = 3029
+
+#: Where generated modules live. One studio per document, named so a student
+#: can see at a glance which tab the copilot writes to — and so that the
+#: verification studio, whose source *is* restored, is never the same tab as a
+#: studio something has been inserted from.
+COPILOT_STUDIO_NAME = "FRC Copilot"
+
+
+async def ensure_feature_studio(
+    client: OnshapeApiClient,
+    *,
+    document_id: str,
+    workspace_id: str,
+    name: str = COPILOT_STUDIO_NAME,
+) -> str:
+    """The element id of a Feature Studio with this name, creating it if absent.
+
+    Lets callers name a Part Studio and nothing else: the studio that holds the
+    generated source is an implementation detail, and asking a student for a
+    second element id is asking for the two to be mismatched.
+    """
+    base = f"/documents/d/{document_id}/w/{workspace_id}/elements"
+    for element in (await client.get(base)).json():
+        if element.get("name") == name and element.get("elementType") == "FEATURESTUDIO":
+            return element["id"]
+
+    created = (await client.post(
+        f"/featurestudios/d/{document_id}/w/{workspace_id}",
+        json_body={"name": name},
+    )).json()
+    logger.info("created Feature Studio %r: %s", name, created.get("id"))
+    return created["id"]
 
 
 @dataclass

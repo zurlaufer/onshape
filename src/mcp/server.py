@@ -50,11 +50,17 @@ from src.api.onshape_client import (
     OnshapeConfigError,
     OnshapeError,
 )
+from src.api.write_policy import WriteRefused
 from src.context.cache import AssemblyCache
 from src.context.graph import AssemblyGraph
 from src.context.queries import assembly_overview, find_parts, fit_response
-from src.api.write_policy import WriteRefused
-from src.skills.apply import apply_module, probe_body
+from src.context.workspace import Target, Workspace, WorkspaceError
+from src.skills.apply import (
+    apply_module,
+    ensure_feature_studio,
+    persist_feature,
+    probe_body,
+)
 from src.skills.templates import TEMPLATES
 from src.skills.validate import validate_params, validate_source
 
@@ -75,6 +81,22 @@ mcp = FastMCP("frc-cad-copilot")
 
 _client: OnshapeApiClient | None = None
 _cache = AssemblyCache()
+_workspace = Workspace.load()
+
+
+def _resolve(where: str, *, expect: str | None = None) -> Target:
+    """`where` into a target, or a message saying what would have worked.
+
+    Replaced three opaque hex parameters on every tool. `expect` catches the
+    session-observed mistake of handing a Part Studio id to an assembly tool
+    before a request is spent on it.
+    """
+    target = _workspace.resolve(where, expect=expect)
+    if expect in ("assembly", "partstudio", "featurestudio") and not target.element_id:
+        raise WorkspaceError(
+            f"{where!r} names a document but not a tab. Open the {expect} tab "
+            f"and copy its URL, or add it to robot.toml.")
+    return target
 
 
 def get_client() -> OnshapeApiClient:
@@ -123,23 +145,46 @@ async def onshape_check_connection() -> str:
     reachable = "at least one document visible" if count else "no documents visible"
     answer = f"Authenticated with Onshape at {client.base_url} ({reachable})."
 
-    # Onshape meters each endpoint separately, so this speaks only for the one
-    # we just called — but it is a real answer to "am I about to run out", and
-    # it costs no extra request.
-    remaining = client.quota.remaining("GET", client.build_path("/documents"))
-    if remaining is not None:
-        answer += f" Document-list quota remaining: {remaining}."
-    return answer
+    payload: dict[str, object] = {
+        "authenticated": True,
+        "base_url": client.base_url,
+        "documents_visible": count,
+    }
+
+    # What `where` accepts. Without this the model has to guess a name or ask
+    # for a URL, which is how the first real session ended up pasting one.
+    known = _workspace.summary()
+    payload["known_places"] = known or (
+        "No robot.toml found - pass Onshape URLs directly, and note that "
+        "nothing will be writable until documents are listed there.")
+
+    # Onshape meters each endpoint separately. The FeatureScript bucket is the
+    # scarce one, so it is worth naming before a loop starts rather than after.
+    buckets = {k: v["remaining"] for k, v in client.quota.snapshot().items()}
+    if buckets:
+        payload["quota_remaining"] = buckets
+
+    # Both of those grow: the manifest as a team adds subsystems, the quota as
+    # more endpoints get called. Degrade to names rather than overflow.
+    return fit_response(
+        [
+            lambda: payload,
+            lambda: {**payload, "known_places": [
+                p["name"] for p in known] if known else known},
+        ],
+        narrow_hint="Place details were trimmed; ask for one by name.",
+    )
 
 
-async def _load_graph(document_id: str, workspace_id: str, element_id: str):
+async def _load_graph(target: Target):
     """Fetch (or reuse) an assembly definition and index it.
 
     The cache means the 1.09 MB definition is fetched once per document edit
-    rather than once per question; a warm call costs a single 49-byte request.
+    rather than once per question; a warm call costs a single 49-byte request,
+    and a repeat inside the TTL costs none.
     """
-    client = get_client()
-    raw = await _cache.get_definition(client, document_id, workspace_id, element_id)
+    raw = await _cache.get_definition(
+        get_client(), target.document_id, target.wvm_id, target.element_id or "")
     return AssemblyGraph.from_definition(raw)
 
 
@@ -180,9 +225,7 @@ def _quota_note(client: OnshapeApiClient) -> dict[str, object]:
 
 @mcp.tool
 async def onshape_assembly_overview(
-    document_id: str,
-    workspace_id: str,
-    element_id: str,
+    where: str,
     path: str | None = None,
     depth: int = 1,
 ) -> str:
@@ -196,27 +239,23 @@ async def onshape_assembly_overview(
     matching swerve modules appear once as `count: 4` rather than four times.
 
     Args:
-        document_id: Onshape document id (the `/documents/{id}` segment of a URL).
-        workspace_id: Workspace id (the `/w/{id}` segment).
-        element_id: The assembly tab's element id (the `/e/{id}` segment).
+        where: Which assembly. A name from robot.toml (see
+            `onshape_check_connection`), or a pasted Onshape URL. Copy the URL
+            with the *assembly* tab open — every tab has its own address.
         path: Slash-separated component names from a previous result, e.g.
             "Robot <1>/Drivetrain <1>". Omit for the top level.
         depth: How many levels to show, 0-3. Defaults to 1.
     """
     try:
-        graph = await _load_graph(document_id, workspace_id, element_id)
+        target = _resolve(where, expect="assembly")
+        graph = await _load_graph(target)
     except Exception as exc:  # noqa: BLE001 - always answer the caller
         return _explain(exc)
     return assembly_overview(graph, path=path, depth=depth)
 
 
 @mcp.tool
-async def onshape_find_part(
-    document_id: str,
-    workspace_id: str,
-    element_id: str,
-    query: str,
-) -> str:
+async def onshape_find_part(where: str, query: str) -> str:
     """Find components in an assembly whose name contains some text.
 
     Returns each match's full path, which can be passed to
@@ -225,60 +264,249 @@ async def onshape_find_part(
     places it appears.
 
     Args:
-        document_id: Onshape document id.
-        workspace_id: Workspace id.
-        element_id: The assembly tab's element id.
+        where: Which assembly — a name from robot.toml or a pasted URL.
         query: Text to look for in component names, case-insensitive. Shorter
             fragments match more; try "swerve" before "swerve module v3".
     """
     try:
-        graph = await _load_graph(document_id, workspace_id, element_id)
+        target = _resolve(where, expect="assembly")
+        graph = await _load_graph(target)
     except Exception as exc:  # noqa: BLE001 - always answer the caller
         return _explain(exc)
     return find_parts(graph, query)
 
 
 @mcp.tool
-async def frc_list_templates(name: str | None = None) -> str:
-    """List the FRC CAD templates this server can generate and apply.
+async def frc_probe_featurescript(where: str, body: str) -> str:
+    """Run FeatureScript against real geometry and get diagnostics back.
 
-    Call this before `frc_apply_template` to see each template's parameters,
-    units and constraints. Templates are hand-written and pre-verified: you
-    choose one and supply its parameters rather than writing FeatureScript.
+    This is the fastest way to find out whether FeatureScript works. Onshape
+    evaluates the body and reports syntax errors with a line and column, unknown
+    function names, and runtime failures including "query matched nothing" —
+    the failure that matters most when selecting faces or edges.
+
+    **Nothing is persisted.** It can also run real modelling operations, so a
+    probe can build a test body, cut it and measure the result, all inside one
+    call that leaves the document untouched. Use `makeId("name")` where a
+    feature would normally receive an `id`.
+
+    Send a bare lambda. `import`, `annotation` and `export` are rejected by this
+    endpoint; the standard library is available without importing.
+
+        function(context is Context, queries) { ... }
+
+    Costs one request from a bucket of roughly 100 per day, shared by everyone
+    on this key — the scarcest thing here. Check the parameters locally with
+    `frc_check_design` before spending one.
 
     Args:
-        name: Optional. One template's name, for its full parameter list on its
-            own. Omit to see everything; if that no longer fits the response
-            ceiling you will get summaries only, and can then ask by name.
+        where: A Part Studio to evaluate against — a name from robot.toml or a
+            pasted URL. Its geometry is what queries will see.
+        body: The lambda source.
     """
-    if name is not None:
-        template = TEMPLATES.get(name)
-        if template is None:
-            return json.dumps(
-                {"error": f"Unknown template {name!r}.",
-                 "available": sorted(TEMPLATES)}, indent=2)
-        return fit_response(
-            [lambda: {"template": _template_detail(template)}],
-            narrow_hint="This single template's schema is already minimal.",
-        )
+    try:
+        target = _resolve(where, expect="partstudio")
+        client = get_client()
+    except Exception as exc:  # noqa: BLE001
+        return _explain(exc)
 
-    note = (
-        "Parameters are validated locally first (dimensional arithmetic, no API "
-        "cost). Impossible designs are rejected before Onshape is contacted."
+    local = validate_source(body, is_module=False)
+    if any(p.is_error for p in local):
+        return json.dumps({
+            "ok": False, "stage": "source", "api_requests_used": 0,
+            "problems": [p.to_dict() for p in local]}, indent=2)
+
+    spent = client.quota.requests_used
+    try:
+        result = await probe_body(
+            client, body,
+            document_id=target.document_id,
+            workspace_id=target.wvm_id,
+            part_studio_id=target.element_id or "",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _explain(exc)
+
+    out: dict = {
+        "ok": result.ok,
+        "api_requests_used": client.quota.requests_used - spent,
+        "problems": [p.to_dict() for p in result.problems]
+                    + [p.to_dict() for p in local],
+    }
+    if result.ok and result.value is not None:
+        out["result"] = result.value
+    out.update(_quota_note(client))
+    return fit_response(
+        [lambda: out, lambda: {k: v for k, v in out.items() if k != "result"}],
+        narrow_hint="The returned value was omitted; return less from the lambda.",
     )
-    # Richest first. The library grows, the ceiling does not: three templates
-    # already fill about 70% of it, so the summaries-only fallback is what keeps
-    # this tool working at ten. Without it the model would get an error telling
-    # it to narrow a call that had no way to narrow.
+
+
+@mcp.tool
+async def frc_apply_featurescript(
+    where: str,
+    module: str,
+    feature_name: str,
+    preview: bool = False,
+) -> str:
+    """Add a custom feature to a Part Studio, and leave it there.
+
+    Give it a complete Feature Studio module — a `FeatureScript` header, an
+    import, and one `defineFeature`. It is written to a Feature Studio in the
+    same document, compiled, and inserted into the Part Studio. Run it again
+    after changing the design and it updates the same feature rather than
+    stacking duplicates.
+
+    Prefer an existing community FeatureScript over new geometry where one fits:
+    the FRC community maintains dozens (Tube Converter, CheeseIt!, Spur Gear).
+
+    Probe the body first with `frc_probe_featurescript` — that is where line
+    numbers come from. This tool reports *that* something failed, rarely why.
+
+    Only documents marked writable in robot.toml can be written to, and that is
+    enforced inside the API client rather than here.
+
+    Args:
+        where: The Part Studio the feature should appear in.
+        module: Full Feature Studio source.
+        feature_name: What the feature is called in the tree, e.g.
+            "Climber Gearbox Plate".
+        preview: Check that it compiles and then put everything back, changing
+            nothing. Use for a dry run; the default is to keep the result.
+    """
+    try:
+        target = _resolve(where, expect="partstudio")
+        client = get_client()
+    except Exception as exc:  # noqa: BLE001
+        return _explain(exc)
+
+    if not client.write_policy.allows(target.document_id):
+        return json.dumps({
+            "ok": False, "stage": "write_safety", "api_requests_used": 0,
+            "error": str(client.write_policy.refuse(target.document_id))}, indent=2)
+
+    local = validate_source(module, is_module=True)
+    if any(p.is_error for p in local):
+        return json.dumps({
+            "ok": False, "stage": "source", "api_requests_used": 0,
+            "problems": [p.to_dict() for p in local]}, indent=2)
+
+    spent = client.quota.requests_used
+    try:
+        studio_id = await ensure_feature_studio(
+            client, document_id=target.document_id, workspace_id=target.wvm_id)
+
+        if preview:
+            compiled, problems = await apply_module(
+                client, module,
+                document_id=target.document_id,
+                workspace_id=target.wvm_id,
+                feature_studio_id=studio_id,
+                restore=True,
+            )
+            out: dict = {
+                "ok": compiled, "stage": "preview", "reverted": True,
+                "problems": [p.to_dict() for p in problems],
+            }
+        else:
+            result = await persist_feature(
+                client, module,
+                document_id=target.document_id,
+                workspace_id=target.wvm_id,
+                feature_studio_id=studio_id,
+                part_studio_id=target.element_id or "",
+                feature_name=feature_name,
+            )
+            out = {"stage": "applied", **result.to_dict()}
+            if result.ok:
+                out["note"] = (
+                    f"{feature_name!r} is now in {target.describe()}. Run this "
+                    f"again after changing the design and it updates in place.")
+    except WriteRefused as exc:
+        return json.dumps({"ok": False, "stage": "write_safety",
+                           "error": str(exc)}, indent=2)
+    except Exception as exc:  # noqa: BLE001
+        return _explain(exc)
+
+    out["problems"] = out.get("problems", []) + [p.to_dict() for p in local]
+    out["api_requests_used"] = client.quota.requests_used - spent
+    out.update(_quota_note(client))
+    return json.dumps(out, indent=2)
+
+
+@mcp.tool
+async def frc_list_checks() -> str:
+    """List the FRC design checks available, and the parameters each needs.
+
+    Call this before `frc_check_design`. These are engineering rules a CAD tool
+    does not know — minimum tooth counts, end mill radii, wall thicknesses,
+    material density — plus the geometry they imply.
+    """
+    payload = {
+        "checks": [_template_detail(t) for t in TEMPLATES.values()],
+        "note": ("All of these run locally and cost nothing. Use them before "
+                 "spending a FeatureScript probe."),
+    }
     return fit_response(
         [
-            lambda: {"templates": [_template_detail(t) for t in TEMPLATES.values()],
-                     "note": note},
-            lambda: {"templates": [{"name": t.name, "summary": t.summary}
-                                   for t in TEMPLATES.values()], "note": note},
-            lambda: {"templates": sorted(TEMPLATES), "note": note},
+            lambda: payload,
+            lambda: {"checks": [{"name": t.name, "summary": t.summary}
+                                for t in TEMPLATES.values()],
+                     "note": payload["note"]},
+            lambda: {"checks": sorted(TEMPLATES)},
         ],
-        narrow_hint="Call frc_list_templates(name=...) for one template's parameters.",
+        narrow_hint="Call frc_check_design with one name for its full schema.",
+    )
+
+
+@mcp.tool
+async def frc_check_design(design: str, parameters: dict) -> str:
+    """Check a design against FRC engineering rules, and get the numbers out.
+
+    Free and instant — no Onshape request. Catches what is impossible on paper
+    (a hole wider than its tube, a pocket narrower than the cutter, a gear pair
+    whose bores would intersect) and returns the dimensions those rules imply:
+    a gear pair's centre distance, a pocket grid's size, the grams a lightening
+    pattern removes.
+
+    Run this before generating any geometry. The numbers it returns are what the
+    FeatureScript should be built around, whether that is a community feature or
+    one you write.
+
+    Args:
+        design: A name from `frc_list_checks`.
+        parameters: Its parameters. Dimensions in millimetres.
+    """
+    template = TEMPLATES.get(design)
+    if template is None:
+        return json.dumps({"ok": False, "error": f"Unknown design {design!r}.",
+                           "available": sorted(TEMPLATES)}, indent=2)
+
+    problems = validate_params(design, parameters)
+    ok = not any(p.is_error for p in problems)
+
+    out: dict = {
+        "ok": ok,
+        "design": design,
+        "api_requests_used": 0,
+        "problems": [p.to_dict() for p in problems],
+    }
+    if ok:
+        out["derived"] = _derived_numbers(template, parameters)
+        out["featurescript"] = {
+            "probe_body": template.render_probe(parameters),
+            "module": template.render_module(parameters),
+        }
+        out["note"] = ("Probe `probe_body` with frc_probe_featurescript, then "
+                       "apply `module` with frc_apply_featurescript.")
+
+    return fit_response(
+        [
+            lambda: out,
+            lambda: {k: v for k, v in out.items() if k != "featurescript"},
+        ],
+        narrow_hint="The generated source was omitted; re-run once the "
+                    "parameters settle.",
     )
 
 
@@ -290,134 +518,35 @@ def _template_detail(template) -> dict:
     }
 
 
-@mcp.tool
-async def frc_apply_template(
-    template: str,
-    parameters: dict,
-    document_id: str,
-    workspace_id: str,
-    part_studio_id: str,
-    feature_studio_id: str | None = None,
-) -> str:
-    """Validate FRC CAD template parameters, then generate and check FeatureScript.
+def _derived_numbers(template, parameters: dict) -> dict:
+    """Whatever a design computes that a student would otherwise work out.
 
-    Runs cheapest-first: dimensional checks happen locally and cost nothing, so
-    an impossible design (a hole wider than its tube) is refused without
-    contacting Onshape. Only if those pass is the generated code evaluated
-    against Onshape, which reports syntax and query failures with line numbers.
-
-    Writes are limited to scratch documents and are reverted afterwards; this
-    verifies a template rather than committing it to a design.
-
-    Args:
-        template: Template name from `frc_list_templates`.
-        parameters: Template parameters. Dimensions in millimetres.
-        document_id: Onshape document id.
-        workspace_id: Workspace id.
-        part_studio_id: A Part Studio to evaluate against.
-        feature_studio_id: Optional. When given, the full module is also
-            compiled in that Feature Studio and the original source restored.
+    Each template exposes its own derivations; this collects the ones present
+    rather than requiring every template to implement a common interface it
+    would only partly mean.
     """
-    tpl = TEMPLATES.get(template)
-    if tpl is None:
-        return json.dumps(
-            {"ok": False, "error": f"Unknown template {template!r}.",
-             "available": sorted(TEMPLATES)}, indent=2)
-
-    # Refuse a write up front. The client enforces this regardless, so the check
-    # here is only to answer at zero cost and with a clearer message than a
-    # failure three steps in. Probing is read-only and safe anywhere.
-    if feature_studio_id:
-        try:
-            policy = get_client().write_policy
-        except Exception as exc:  # noqa: BLE001 - config problems answer first
-            return _explain(exc)
-        if not policy.allows(document_id):
-            return json.dumps({
-                "ok": False, "stage": "write_safety",
-                "api_requests_used": 0,
-                "error": str(policy.refuse(document_id))}, indent=2)
-
-    # --- Layers 3-4: parameters, free -----------------------------------
-    problems = validate_params(template, parameters)
-    if any(p.is_error for p in problems):
-        return json.dumps({
-            "ok": False,
-            "stage": "parameters",
-            "api_requests_used": 0,
-            "problems": [p.to_dict() for p in problems],
-        }, indent=2)
-
-    module = tpl.render_module(parameters)
-    probe = tpl.render_probe(parameters)
-
-    # --- Layers 1-2: generated source, free ------------------------------
-    source_problems = (validate_source(probe, is_module=False)
-                       + validate_source(module, is_module=True))
-    if any(p.is_error for p in source_problems):
-        return json.dumps({
-            "ok": False,
-            "stage": "source",
-            "api_requests_used": 0,
-            "problems": [p.to_dict() for p in source_problems + problems],
-        }, indent=2)
-
-    warnings = [p.to_dict() for p in problems + source_problems]
-
-    # --- Layer 5: Onshape probe, real diagnostics ------------------------
-    # Request counts are measured from the client's own ledger rather than
-    # written down here. The hardcoded numbers this replaces were guesses, and
-    # they were wrong the moment a retry fired.
+    derived: dict[str, object] = {}
     try:
-        client = get_client()
-        spent_before = client.quota.requests_used
-        result = await probe_body(
-            client, probe,
-            document_id=document_id, workspace_id=workspace_id,
-            part_studio_id=part_studio_id,
-        )
-    except WriteRefused as exc:
-        return json.dumps({"ok": False, "stage": "write_safety", "error": str(exc)}, indent=2)
-    except Exception as exc:  # noqa: BLE001 - always answer the caller
-        return _explain(exc)
-
-    out: dict = {
-        "ok": result.ok,
-        "stage": "onshape_probe",
-        "api_requests_used": client.quota.requests_used - spent_before,
-        "problems": [p.to_dict() for p in result.problems] + warnings,
-    }
-
-    # --- Layer 6: compile the real module, optional ----------------------
-    if result.ok and feature_studio_id:
-        try:
-            compiled, compile_problems = await apply_module(
-                client, module,
-                document_id=document_id, workspace_id=workspace_id,
-                feature_studio_id=feature_studio_id,
-            )
-            out["stage"] = "onshape_compile"
-            out["ok"] = compiled
-            out["problems"] += [p.to_dict() for p in compile_problems]
-            out["feature_studio_restored"] = True
-        except WriteRefused as exc:
-            out["ok"] = False
-            out["stage"] = "write_safety"
-            out["error"] = str(exc)
-        except Exception as exc:  # noqa: BLE001
-            return _explain(exc)
-        finally:
-            out["api_requests_used"] = client.quota.requests_used - spent_before
-
-    out.update(_quota_note(client))
-
-    if out["ok"]:
-        out["featurescript"] = module
-
-    return fit_response(
-        [lambda: out, lambda: {k: v for k, v in out.items() if k != "featurescript"}],
-        narrow_hint="The generated source was omitted; re-run for it once the parameters settle.",
-    )
+        if hasattr(template, "centre_distance_mm"):
+            derived["centre_distance_mm"] = round(
+                template.centre_distance_mm(parameters), 4)
+        if hasattr(template, "reduction"):
+            derived["reduction"] = round(template.reduction(parameters), 4)
+        if hasattr(template, "pitch_diameters_mm"):
+            driving, driven = template.pitch_diameters_mm(parameters)
+            derived["pitch_diameter_mm"] = {
+                "driving": round(driving, 4), "driven": round(driven, 4)}
+        if hasattr(template, "pocket_size"):
+            width, length = template.pocket_size(parameters)
+            derived["pocket_mm"] = {"width": round(width, 4),
+                                    "length": round(length, 4)}
+        if hasattr(template, "mass_removed_g"):
+            derived["mass_removed_g"] = round(template.mass_removed_g(parameters), 2)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        # Derivations are a bonus. A parameter set that survived validation but
+        # trips one of these must not turn a useful answer into an error.
+        logger.debug("could not derive numbers for %s", template.name)
+    return derived
 
 
 def main() -> None:

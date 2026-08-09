@@ -59,10 +59,13 @@ verified infrastructure and zero questions from an actual FRC student.
 | `src/api/onshape_client.py` | HMAC signing, classified retries, per-endpoint timeouts. Verified live. |
 | `src/api/quota.py` | Per-bucket quota ledger. Observational only — reads the header, never simulates. |
 | `src/api/errors.py` | `OnshapeError` hierarchy; every type carries one actionable sentence. |
-| `src/mcp/server.py` | FastMCP server, **5 tools** of an 8-tool budget. |
+| `src/mcp/server.py` | FastMCP server, **7 tools** of an 8-tool budget, ~1,688 tokens per request. All take `where`. |
 | `src/context/cache.py` | Microversion-keyed disk cache + 60 s TTL. Cold = 2 requests, warm = 1, repeat = **0**. |
 | `src/context/graph.py` | `AssemblyGraph` — named tree + definition dedup. Pure, no I/O. |
 | `src/context/queries.py` | Narrow queries behind a hard 8 KB response ceiling. |
+| `src/context/workspace.py` | Resolves `where`: a robot.toml name, a pasted URL, or raw ids. |
+| `src/api/write_policy.py` | The write allowlist, enforced inside `client.request()`. |
+| `robot.toml` | **Committed.** What the copilot knows about, and where it may write. |
 | `src/physics/motors.py` | Kraken X60 (trapezoidal + FOC), NEO V1.1. Dependency-free. Vendor-verified constants. |
 | `src/physics/climber.py` | Rotating-arm climber kinematics. Over-centre lever, fold simulation, static-hold sizing. Pure. |
 | `src/physics/geartrain.py` | Spur stacks: centre distances, **the shaft-clearance constraint**, stack search, plate folding. Pure. |

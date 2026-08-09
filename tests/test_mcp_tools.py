@@ -5,8 +5,8 @@ closest to the user was the least tested: 50 tests on the client, 59 on skill
 validation, 37 on the context graph, and **none** on the tools themselves.
 
 Everything here runs offline. That is not a compromise — the paths worth pinning
-are the ones that must answer *without* spending a request: an unknown template,
-a refused write, an impossible design, and a response that outgrew its ceiling.
+are the ones that must answer *without* spending a request: an unknown design, a
+refused write, an impossible layout, and a response that outgrew its ceiling.
 """
 
 from __future__ import annotations
@@ -18,19 +18,25 @@ import pytest
 from src.api.errors import OnshapeConfigError, OnshapeTimeoutError
 from src.api.quota import QuotaLedger
 from src.context.queries import MAX_RESPONSE_BYTES
+from src.context.workspace import Target, Workspace
 from src.mcp import server
 from src.skills.templates import TEMPLATES
 
 CITRUS = "8d51b49e4b833c57f7d33bf0"  # a real robot; never a write target
 SCRATCH = "e424515893d4f1ab8b23e5c4"
 
+POCKET = {
+    "plate_width": 150.0, "plate_length": 150.0, "plate_thickness": 6.35,
+    "columns": 3, "rows": 3, "rib_width": 8.0, "border_width": 12.0,
+}
+
 
 @pytest.fixture
-def many_templates():
+def many_designs():
     """Stand in a grown library, then put the real one back.
 
-    Three templates already fill ~70% of the response ceiling, so "what happens
-    at ten" is a question about next month, not about a hypothetical.
+    Three designs already fill most of the response ceiling, so "what happens at
+    ten" is a question about next month, not a hypothetical.
     """
     real = dict(TEMPLATES)
     for i in range(10):
@@ -40,93 +46,140 @@ def many_templates():
     TEMPLATES.update(real)
 
 
-class TestListTemplates:
-    async def test_lists_every_template_with_its_parameters(self):
-        payload = json.loads(await server.frc_list_templates())
-        names = {t["name"] for t in payload["templates"]}
-        assert names == set(TEMPLATES)
-        assert all("parameters" in t for t in payload["templates"])
+class TestListChecks:
+    async def test_lists_every_design_with_its_parameters(self):
+        payload = json.loads(await server.frc_list_checks())
+        assert {c["name"] for c in payload["checks"]} == set(TEMPLATES)
+        assert all("parameters" in c for c in payload["checks"])
 
     async def test_fits_the_ceiling_today(self):
-        assert len(await server.frc_list_templates()) <= MAX_RESPONSE_BYTES
+        assert len(await server.frc_list_checks()) <= MAX_RESPONSE_BYTES
 
-    async def test_one_template_by_name(self):
-        payload = json.loads(
-            await server.frc_list_templates("plate_pocket_pattern"))
-        assert payload["template"]["name"] == "plate_pocket_pattern"
-        assert payload["template"]["parameters"]
-
-    async def test_unknown_name_lists_the_real_ones(self):
-        """A dead end should hand back the way out."""
-        payload = json.loads(await server.frc_list_templates("pocket"))
-        assert "Unknown template" in payload["error"]
-        assert payload["available"] == sorted(TEMPLATES)
-
-    async def test_a_grown_library_degrades_instead_of_failing(self, many_templates):
+    async def test_a_grown_library_degrades_instead_of_failing(self, many_designs):
         """The defect this replaced: a single candidate meant an oversized
         listing fell through to 'too large' and told the model to narrow a call
-        that took no arguments. Zero template information, no way forward."""
-        text = await server.frc_list_templates()
+        that took no arguments. Zero information, no way forward."""
+        text = await server.frc_list_checks()
         payload = json.loads(text)
-
         assert len(text) <= MAX_RESPONSE_BYTES
         assert "error" not in payload
-        assert payload["truncated"] is True
-        assert len(payload["templates"]) == len(TEMPLATES), "every name survives"
+        assert len(payload["checks"]) == len(TEMPLATES), "every name survives"
 
-    async def test_the_truncation_hint_names_a_call_that_exists(self, many_templates):
+    async def test_the_truncation_hint_names_a_call_that_exists(self, many_designs):
         """Advice the model cannot act on is worse than none."""
-        payload = json.loads(await server.frc_list_templates())
-        assert "frc_list_templates(name=" in payload["note"]
-
-        # And it must actually work for a name from the degraded listing.
-        first = payload["templates"][0]
-        name = first if isinstance(first, str) else first["name"]
-        detail = json.loads(await server.frc_list_templates(name))
-        assert detail["template"]["parameters"]
+        payload = json.loads(await server.frc_list_checks())
+        assert "frc_check_design" in payload.get("note", "")
 
 
-class TestApplyTemplateFreePaths:
-    """Everything that must be answered without spending a request."""
+class TestCheckDesign:
+    """Free, instant, and the place the project's engineering value lives."""
 
-    PARAMS = {
-        "plate_width": 150.0, "plate_length": 150.0, "plate_thickness": 6.35,
-        "columns": 3, "rows": 3, "rib_width": 8.0, "border_width": 12.0,
-    }
+    async def test_a_sound_design_returns_the_numbers_it_implies(self):
+        payload = json.loads(await server.frc_check_design("plate_pocket_pattern", POCKET))
+        assert payload["ok"] is True
+        assert payload["api_requests_used"] == 0
+        derived = payload["derived"]
+        assert derived["pocket_mm"]["width"] == pytest.approx(36.6667, abs=1e-3)
+        assert derived["mass_removed_g"] == pytest.approx(207.5, abs=1.0)
 
-    async def test_unknown_template_is_refused_with_the_alternatives(self):
-        payload = json.loads(await server.frc_apply_template(
-            "make_me_a_robot", {}, SCRATCH, "W", "P"))
+    async def test_gear_geometry_is_derived_too(self):
+        payload = json.loads(await server.frc_check_design("gearbox_bore_pattern", {
+            "driving_teeth": 14, "driven_teeth": 50, "bore_diameter": 12.7,
+            "plate_width": 120.0, "plate_height": 90.0}))
+        assert payload["derived"]["centre_distance_mm"] == pytest.approx(40.64)
+        assert payload["derived"]["reduction"] == pytest.approx(50 / 14, abs=1e-3)
+
+    async def test_it_hands_back_source_to_probe_and_apply(self):
+        """The composition the first real session showed the model wants:
+        check, probe, apply."""
+        payload = json.loads(await server.frc_check_design("plate_pocket_pattern", POCKET))
+        assert payload["featurescript"]["probe_body"].startswith("function(")
+        assert "defineFeature" in payload["featurescript"]["module"]
+
+    async def test_an_impossible_layout_is_refused_for_nothing(self):
+        """The number that justifies the whole local layer."""
+        payload = json.loads(await server.frc_check_design(
+            "plate_pocket_pattern", dict(POCKET, columns=20)))
         assert payload["ok"] is False
+        assert payload["api_requests_used"] == 0
+        assert payload["problems"]
+        assert "featurescript" not in payload, "do not hand out source that cannot work"
+
+    async def test_missing_parameters_are_named_not_just_counted(self):
+        payload = json.loads(await server.frc_check_design(
+            "plate_pocket_pattern", {"plate_width": 150.0}))
+        assert "plate_thickness" in " ".join(p["message"] for p in payload["problems"])
+
+    async def test_an_unknown_design_lists_the_real_ones(self):
+        payload = json.loads(await server.frc_check_design("make_me_a_robot", {}))
         assert payload["available"] == sorted(TEMPLATES)
 
+    async def test_derivations_never_turn_an_answer_into_an_error(self):
+        """A bonus that raises must not cost the caller the real result."""
+        class Awkward:
+            name = "awkward"
+
+            def centre_distance_mm(self, params):
+                raise ZeroDivisionError("no pitch")
+
+        assert server._derived_numbers(Awkward(), {}) == {}
+
+
+class TestWriteSafetyAtTheToolSurface:
     async def test_a_team_robot_is_refused_at_zero_cost(self):
-        """FM2. The check runs before anything is spent, and before any code is
-        generated — a copilot that can write into a robot the week before a
-        competition is an incident waiting to happen."""
-        payload = json.loads(await server.frc_apply_template(
-            "plate_pocket_pattern", self.PARAMS, CITRUS, "W", "P",
-            feature_studio_id="F"))
+        """FM2. Refused before anything is generated or spent — a copilot that
+        can write into a robot the week before a competition is an incident
+        waiting to happen."""
+        payload = json.loads(await server.frc_apply_featurescript(
+            where=f"{CITRUS}/b6722fcc07bf8d271ff14e47/5c9a297fdb631e7177684001",
+            module="FeatureScript 3029;\nimport(path : \"onshape/std/geometry.fs\", version : \"3029.0\");\n",
+            feature_name="nope"))
         assert payload["ok"] is False
         assert payload["stage"] == "write_safety"
         assert payload["api_requests_used"] == 0
 
-    async def test_an_impossible_design_never_reaches_onshape(self):
-        """The number that justifies the whole local validation layer."""
-        payload = json.loads(await server.frc_apply_template(
-            "plate_pocket_pattern", dict(self.PARAMS, columns=20),
-            SCRATCH, "W", "P"))
+    async def test_malformed_source_never_reaches_onshape(self):
+        payload = json.loads(await server.frc_apply_featurescript(
+            where=f"{SCRATCH}/65294e9343b8524f94ad5093/4fa46792842ff31b21179dad",
+            module="this is not featurescript",
+            feature_name="nope"))
         assert payload["ok"] is False
-        assert payload["stage"] == "parameters"
+        assert payload["stage"] == "source"
         assert payload["api_requests_used"] == 0
-        assert payload["problems"]
 
-    async def test_missing_parameters_are_named_not_just_counted(self):
-        payload = json.loads(await server.frc_apply_template(
-            "plate_pocket_pattern", {"plate_width": 150.0}, SCRATCH, "W", "P"))
-        messages = " ".join(p["message"] for p in payload["problems"])
-        assert "plate_thickness" in messages
+    async def test_a_probe_lambda_with_an_import_is_refused_locally(self):
+        """The evaluate endpoint rejects it; no reason to spend a request
+        learning that again."""
+        payload = json.loads(await server.frc_probe_featurescript(
+            where=f"{SCRATCH}/65294e9343b8524f94ad5093/4fa46792842ff31b21179dad",
+            body='import(path : "onshape/std/geometry.fs", version : "3029.0");'))
+        assert payload["ok"] is False
         assert payload["api_requests_used"] == 0
+
+
+class TestWhereResolution:
+    """One `where` replaced three hex ids on every tool."""
+
+    async def test_an_unknown_name_explains_itself(self):
+        answer = await server.onshape_assembly_overview(where="Elevator")
+        assert "Elevator" in answer
+        assert "scratch" in answer or "robot" in answer, "must list what exists"
+
+    async def test_the_wrong_tab_type_is_caught_before_a_request(self):
+        """The first real session's only 400: a Part Studio id passed to an
+        assembly tool. Now it never leaves the process."""
+        answer = await server.onshape_assembly_overview(where="scratch")
+        assert "partstudio" in answer and "assembly" in answer
+
+    def test_a_document_without_a_tab_is_refused_with_advice(self):
+        empty = Workspace([Target(document_id=CITRUS, wvm_id="w" * 24,
+                                  name="robot", kind=None)])
+        original, server._workspace = server._workspace, empty
+        try:
+            with pytest.raises(Exception, match="names a document but not a tab"):
+                server._resolve("robot", expect="assembly")
+        finally:
+            server._workspace = original
 
 
 class _StubQuotaClient:
@@ -144,20 +197,15 @@ class TestQuotaNote:
 
     def test_silent_when_there_is_headroom(self):
         ledger = QuotaLedger()
-        ledger.record("GET", "/api/v26/documents",
-                      {"x-rate-limit-remaining": "900"})
+        ledger.record("GET", "/api/v26/documents", {"x-rate-limit-remaining": "900"})
         assert server._quota_note(_StubQuotaClient(ledger)) == {}
 
     def test_speaks_up_when_a_bucket_runs_low(self):
         ledger = QuotaLedger()
-        ledger.record("POST", "/api/v26/partstudios/d/aaaaaaaaaaaaaaaaaaaaaaaa"
-                              "/w/bbbbbbbbbbbbbbbbbbbbbbbb"
-                              "/e/cccccccccccccccccccccccc/featurescript",
-                      {"x-rate-limit-remaining": "100"})
-        ledger.record("POST", "/api/v26/partstudios/d/aaaaaaaaaaaaaaaaaaaaaaaa"
-                              "/w/bbbbbbbbbbbbbbbbbbbbbbbb"
-                              "/e/cccccccccccccccccccccccc/featurescript",
-                      {"x-rate-limit-remaining": "9"})
+        route = ("/api/v26/partstudios/d/aaaaaaaaaaaaaaaaaaaaaaaa"
+                 "/w/bbbbbbbbbbbbbbbbbbbbbbbb/e/cccccccccccccccccccccccc/featurescript")
+        ledger.record("POST", route, {"x-rate-limit-remaining": "100"})
+        ledger.record("POST", route, {"x-rate-limit-remaining": "9"})
         note = server._quota_note(_StubQuotaClient(ledger))
         assert note["quota_warning"]["low_endpoints"]
         assert "each endpoint separately" in note["quota_warning"]["note"]
@@ -173,8 +221,7 @@ class TestErrorExplanations:
 
     def test_config_errors_point_at_the_file_to_fix(self):
         text = server._explain(OnshapeConfigError("Missing ONSHAPE_ACCESS_KEY."))
-        assert "ONSHAPE_ACCESS_KEY" in text
-        assert ".env" in text
+        assert "ONSHAPE_ACCESS_KEY" in text and ".env" in text
 
     def test_an_unexpected_failure_still_names_its_type(self):
         """An unrecognised error is a bug in us; hiding it makes it harder to
