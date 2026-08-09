@@ -38,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.api.onshape_client import OnshapeApiClient  # noqa: E402
-from src.skills.apply import ScratchPolicy  # noqa: E402
+from src.api.write_policy import WritePolicy  # noqa: E402
 
 # Scratch only (FM2). Never a team's robot.
 DID = "e424515893d4f1ab8b23e5c4"
@@ -65,7 +65,9 @@ async def list_features(client, label: str) -> list[dict]:
 
 
 async def main() -> int:
-    ScratchPolicy().check(DID)
+    policy = WritePolicy.from_manifest()
+    if not policy.allows(DID):
+        raise policy.refuse(DID)
 
     async with OnshapeApiClient.from_env() as client:
         versions = (await client.get(

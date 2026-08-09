@@ -12,8 +12,6 @@ import pytest
 
 from src.skills.apply import (
     LIBRARY_VERSION,
-    ScratchPolicy,
-    WriteRefused,
     apply_module,
     probe_body,
 )
@@ -453,32 +451,31 @@ class TestProbeDiagnostics:
         assert client.posts[0][1]["libraryVersion"] == LIBRARY_VERSION
 
 
-class TestWriteSafety:
-    """FM2 — writes never reach a team's robot."""
+class TestWriteSafetyMovedToTheClient:
+    """FM2 is no longer enforced here, and that is the point.
 
-    @pytest.mark.asyncio
-    async def test_unlisted_document_is_refused(self):
-        with pytest.raises(WriteRefused):
-            await apply_module(_StubClient(), "FeatureScript 3029;",
-                               document_id="8d51b49e4b833c57f7d33bf0",  # Citrus
-                               workspace_id="W", feature_studio_id="F")
+    `apply_module` used to take a `policy=` and check it. That guard only ran
+    for callers who went through this door; a real session used the client
+    directly and issued a DELETE that returned 200. The check now lives in
+    `OnshapeApiClient.request()`, so it cannot be bypassed, and the tests that
+    matter live in `tests/test_onshape_client.py::TestWritePolicy` — against
+    the real client rather than a stub that has no policy to enforce.
 
-    @pytest.mark.asyncio
-    async def test_refusal_happens_before_any_request(self):
-        client = _StubClient()
-        with pytest.raises(WriteRefused):
-            await apply_module(client, "x", document_id="nope",
-                               workspace_id="W", feature_studio_id="F")
-        assert client.posts == []
+    This class stays as a signpost: do not re-add a policy check here. A second
+    guard in a second place is how the two `WriteRefused` classes happened.
+    """
 
-    @pytest.mark.asyncio
-    async def test_allowlisted_document_is_accepted(self):
-        client = _StubClient()
-        policy = ScratchPolicy(allowed=frozenset({"SCRATCH"}))
-        ok, problems = await apply_module(client, "FeatureScript 3029;",
-                                          document_id="SCRATCH", workspace_id="W",
-                                          feature_studio_id="F", policy=policy)
-        assert ok and problems == []
+    def test_apply_module_takes_no_policy_argument(self):
+        import inspect
+
+        assert "policy" not in inspect.signature(apply_module).parameters
+
+    def test_write_refused_has_exactly_one_definition(self):
+        """Two classes of the same name means `except` silently misses one."""
+        from src.api.write_policy import WriteRefused as Canonical
+        from src.skills.apply import WriteRefused as ReExported
+
+        assert ReExported is Canonical
 
 
 class TestApplyModule:
@@ -486,8 +483,8 @@ class TestApplyModule:
     async def test_zero_specs_means_compile_failure(self):
         client = _StubClient(spec_count=0)
         ok, problems = await apply_module(
-            client, "FeatureScript 3029;", document_id="SCRATCH", workspace_id="W",
-            feature_studio_id="F", policy=ScratchPolicy(allowed=frozenset({"SCRATCH"})))
+            client, "FeatureScript 3029;", document_id="SCRATCH",
+            workspace_id="W", feature_studio_id="F")
         assert not ok
         assert "did not compile" in problems[0].message
         assert "probe" in problems[0].suggestion, "must point at the layer that explains why"
@@ -498,15 +495,13 @@ class TestApplyModule:
         original = client.contents
         await apply_module(client, "FeatureScript 3029;\n// new\n",
                            document_id="SCRATCH", workspace_id="W",
-                           feature_studio_id="F",
-                           policy=ScratchPolicy(allowed=frozenset({"SCRATCH"})))
+                           feature_studio_id="F")
         assert client.contents == original
 
     @pytest.mark.asyncio
     async def test_restore_happens_even_when_compilation_fails(self):
         client = _StubClient(spec_count=0)
         original = client.contents
-        await apply_module(client, "broken", document_id="SCRATCH", workspace_id="W",
-                           feature_studio_id="F",
-                           policy=ScratchPolicy(allowed=frozenset({"SCRATCH"})))
+        await apply_module(client, "broken", document_id="SCRATCH",
+                           workspace_id="W", feature_studio_id="F")
         assert client.contents == original

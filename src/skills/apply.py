@@ -15,10 +15,11 @@ first and does the diagnosing.
 Note: the evaluate endpoint returns **HTTP 200 even on failure**. The errors are
 in `notices`. Status codes must never be used as the signal here.
 
-WRITE SAFETY (FM2): every write refuses any document not on an explicit scratch
-allowlist. A copilot that can write into a team's robot the week before a
-competition is an incident waiting to happen, so the boundary is enforced in
-code rather than documented as intent.
+WRITE SAFETY (FM2) is no longer enforced here. It moved into
+`OnshapeApiClient.request()`, because a guard that a caller has to remember to
+invoke is one that eventually is not invoked -- proven when a real session used
+the client directly and issued a DELETE that returned 200. `robot.toml` decides
+which documents are writable; this module just writes.
 
 No `print()` — stdout is the MCP protocol channel.
 """
@@ -26,57 +27,35 @@ No `print()` — stdout is the MCP protocol channel.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.api.onshape_client import OnshapeApiClient
+
+# Re-exported: the allowlist used to live here, but a guard in the polite door
+# is not a guard. It moved into `OnshapeApiClient.request()`, where every write
+# passes whether or not the caller remembers to ask. Keeping the name importable
+# from here means nothing that used it had to change; keeping two *classes*
+# called WriteRefused would have meant `except WriteRefused` silently missing
+# the one actually raised.
+from src.api.write_policy import WritePolicy, WriteRefused
 
 from .templates import Problem, Severity
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "PersistResult",
     "ProbeResult",
-    "ScratchPolicy",
+    "WritePolicy",
     "WriteRefused",
     "decode_fsvalue",
     "probe_body",
     "apply_module",
+    "persist_feature",
 ]
 
 LIBRARY_VERSION = 3029
-
-
-class WriteRefused(PermissionError):
-    """A write was aimed at a document outside the scratch allowlist."""
-
-
-@dataclass
-class ScratchPolicy:
-    """Which documents may be written to.
-
-    Defaults to the project's scratch document. Override with the
-    `FRC_SCRATCH_DOCUMENT_IDS` environment variable (comma-separated) — never by
-    widening this in code, so the allowlist stays visible in configuration.
-    """
-
-    allowed: frozenset[str] = field(
-        default_factory=lambda: frozenset(
-            filter(None, (
-                os.environ.get("FRC_SCRATCH_DOCUMENT_IDS")
-                or "e424515893d4f1ab8b23e5c4"  # asm-try1
-            ).split(","))
-        )
-    )
-
-    def check(self, document_id: str) -> None:
-        if document_id not in self.allowed:
-            raise WriteRefused(
-                f"Refusing to write to document {document_id}. Writes are limited "
-                f"to scratch documents. Set FRC_SCRATCH_DOCUMENT_IDS to allow "
-                f"another, and never point this at a team's robot document."
-            )
 
 
 @dataclass
@@ -209,7 +188,6 @@ async def apply_module(
     document_id: str,
     workspace_id: str,
     feature_studio_id: str,
-    policy: ScratchPolicy | None = None,
     restore: bool = True,
 ) -> tuple[bool, list[Problem]]:
     """Layer 6: write the module to a Feature Studio and confirm it compiled.
@@ -218,10 +196,14 @@ async def apply_module(
     returns 200 regardless (spike 3b). With `restore=True` the original source is
     put back in a `finally`, which is what makes this safe to run as a check.
 
-    Returns (compiled, problems). Costs 3-4 requests.
-    """
-    (policy or ScratchPolicy()).check(document_id)
+    **Never use `restore=True` once a feature has been inserted from this
+    studio.** Restoring moves the microversion the inserted feature is pinned
+    to, and strands it in ERROR permanently — `persist_feature` exists because
+    of that, and passes `restore=False`.
 
+    Returns (compiled, problems). Costs 3-4 requests. Write safety is enforced
+    inside the client, so there is nothing to check here.
+    """
     base = f"/featurestudios/d/{document_id}/w/{workspace_id}/e/{feature_studio_id}"
     original = (await client.get(base)).json()
     previous_source = original.get("contents", "")
@@ -253,3 +235,171 @@ async def apply_module(
                 await write(previous_source)
             except Exception:  # noqa: BLE001 - never mask the original outcome
                 logger.exception("could not restore the Feature Studio source")
+
+
+@dataclass
+class PersistResult:
+    """Outcome of leaving a feature behind in a Part Studio."""
+
+    ok: bool
+    problems: list[Problem] = field(default_factory=list)
+    feature_id: str | None = None
+    feature_type: str | None = None
+    namespace: str | None = None
+    #: True when an existing feature was repointed rather than a new one added.
+    updated: bool = False
+    #: True when a failed insert was removed again.
+    rolled_back: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "ok": self.ok,
+            "problems": [p.to_dict() for p in self.problems],
+        }
+        for key in ("feature_id", "feature_type", "namespace"):
+            if getattr(self, key) is not None:
+                out[key] = getattr(self, key)
+        if self.updated:
+            out["updated_existing"] = True
+        if self.rolled_back:
+            out["rolled_back"] = True
+        return out
+
+
+async def persist_feature(
+    client: OnshapeApiClient,
+    module: str,
+    *,
+    document_id: str,
+    workspace_id: str,
+    feature_studio_id: str,
+    part_studio_id: str,
+    feature_name: str,
+    parameters: list[dict[str, Any]] | None = None,
+) -> PersistResult:
+    """Write a module and leave the feature in the Part Studio.
+
+    The difference from `apply_module` is the whole point of this function: the
+    source is **not** restored, and the inserted feature is repointed at the
+    microversion just written.
+
+    WHY THAT MATTERS, learned by breaking a document. A custom feature is pinned
+    to the microversion that defined it. Restoring the Feature Studio moves that
+    microversion out from under it and the feature is stranded in ERROR forever
+    — that is how a dead `Boom 1` ended up in a scratch Part Studio. Rewriting
+    the source moves it too, so an already-inserted feature must be updated with
+    the fresh namespace every time.
+
+    Idempotent: run it again after changing the design and it edits the feature
+    that is there rather than stacking duplicates.
+
+    ROLLBACK, and its one deliberate asymmetry:
+
+      * An **insert** that fails to regenerate is deleted again. We created it;
+        leaving something broken behind is the failure this function exists to
+        prevent.
+      * An **update** that fails is left in place. It is someone's feature, and
+        silently deleting a student's work to tidy up an error is worse than the
+        error. The failure is reported instead.
+
+    Costs roughly 6-8 requests. Write safety is enforced in the client.
+    """
+    compiled, problems = await apply_module(
+        client, module,
+        document_id=document_id,
+        workspace_id=workspace_id,
+        feature_studio_id=feature_studio_id,
+        restore=False,  # deliberate: see above
+    )
+    if not compiled:
+        return PersistResult(ok=False, problems=problems)
+
+    specs = (await client.get(
+        f"/featurestudios/d/{document_id}/w/{workspace_id}"
+        f"/e/{feature_studio_id}/featurespecs")).json()
+    spec = (specs.get("featureSpecs") or [{}])[0]
+    feature_type = spec.get("featureType")
+    namespace = spec.get("namespace")
+    if not feature_type or not namespace:
+        return PersistResult(ok=False, problems=[Problem(
+            Severity.ERROR,
+            "The module compiled but Onshape reported no feature type to "
+            "insert.",
+            suggestion="Check that the module exports a defineFeature.")])
+
+    part_studio = f"/partstudios/d/{document_id}/w/{workspace_id}/e/{part_studio_id}"
+    existing = (await client.get(f"{part_studio}/features")).json()
+    already = next(
+        (f for f in existing.get("features", [])
+         if f.get("featureType") == feature_type), None)
+
+    payload: dict[str, Any] = {
+        "btType": "BTMFeature-134",
+        "namespace": namespace,
+        "name": feature_name,
+        "featureType": feature_type,
+        "suppressed": False,
+        "parameters": parameters or [],
+        "returnAfterSubfeatures": False,
+        "subFeatures": [],
+    }
+
+    if already is None:
+        created = await client.post(
+            f"{part_studio}/features", json_body={"feature": payload})
+        feature_id = created.json().get("feature", {}).get("featureId")
+        updated = False
+    else:
+        feature_id = already["featureId"]
+        payload["featureId"] = feature_id
+        await client.post(f"{part_studio}/features/featureid/{feature_id}",
+                          json_body={"feature": payload})
+        updated = True
+
+    states = (await client.get(f"{part_studio}/features")).json()
+    status = (states.get("featureStates") or {}).get(
+        feature_id, {}).get("featureStatus")
+
+    if status == "OK":
+        logger.info("feature %s %s in %s", feature_id,
+                    "updated" if updated else "inserted", part_studio_id)
+        return PersistResult(ok=True, feature_id=feature_id,
+                             feature_type=feature_type, namespace=namespace,
+                             updated=updated)
+
+    trouble = [Problem(
+        Severity.ERROR,
+        f"The feature was accepted but regenerated with status {status!r}. "
+        f"The module compiles; the failure is in what it was asked to operate "
+        f"on.",
+        suggestion="Run the probe on the body for a diagnostic with a line "
+                   "number, or check that the geometry it selects exists.")]
+
+    if updated:
+        trouble.append(Problem(
+            Severity.WARNING,
+            f"Feature {feature_id} was already in the Part Studio, so it has "
+            f"been left in place rather than deleted. It is currently in "
+            f"{status!r}.",
+            suggestion="Fix the design and run this again — it updates in "
+                       "place."))
+        return PersistResult(ok=False, problems=trouble, feature_id=feature_id,
+                             feature_type=feature_type, namespace=namespace,
+                             updated=True)
+
+    rolled_back = False
+    try:
+        await client.request(
+            "DELETE", f"{part_studio}/features/featureid/{feature_id}")
+        rolled_back = True
+        logger.info("rolled back failed insert %s", feature_id)
+    except Exception:  # noqa: BLE001 - report the original failure regardless
+        logger.exception("could not roll back the inserted feature")
+        trouble.append(Problem(
+            Severity.ERROR,
+            f"Feature {feature_id} failed to regenerate and could not be "
+            f"removed. It is still in the Part Studio and will not work.",
+            suggestion="Delete it in Onshape."))
+
+    return PersistResult(ok=False, problems=trouble, feature_type=feature_type,
+                         namespace=namespace, rolled_back=rolled_back)

@@ -97,6 +97,23 @@ class WritePolicy:
             logger.info("FRC_SCRATCH_DOCUMENT_IDS adds %d document(s)", len(extra))
         return cls(allowed=frozenset(allowed | extra))
 
+    def allows(self, document_id: str) -> bool:
+        """Whether a document may be written to.
+
+        For callers that want to refuse early with a friendly message rather
+        than let the request path raise. The client checks regardless — this is
+        a courtesy, and courtesies are not load-bearing here.
+        """
+        return not self.enforce or document_id in self.allowed
+
+    def refuse(self, document_id: str) -> WriteRefused:
+        """The refusal a caller should raise, worded the same way as the client's."""
+        listed = ", ".join(sorted(self.allowed)) or "(none)"
+        return WriteRefused(
+            f"Refusing to write to document {document_id}: it is not marked "
+            f"writable in robot.toml. Writable documents: {listed}."
+        )
+
     def check(self, method: str, path: str) -> None:
         """Refuse a mutating request outside the allowlist.
 

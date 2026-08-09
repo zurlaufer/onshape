@@ -53,7 +53,8 @@ from src.api.onshape_client import (
 from src.context.cache import AssemblyCache
 from src.context.graph import AssemblyGraph
 from src.context.queries import assembly_overview, find_parts, fit_response
-from src.skills.apply import ScratchPolicy, WriteRefused, apply_module, probe_body
+from src.api.write_policy import WriteRefused
+from src.skills.apply import apply_module, probe_body
 from src.skills.templates import TEMPLATES
 from src.skills.validate import validate_params, validate_source
 
@@ -323,16 +324,19 @@ async def frc_apply_template(
             {"ok": False, "error": f"Unknown template {template!r}.",
              "available": sorted(TEMPLATES)}, indent=2)
 
-    # Check the write policy up front. Probing is read-only and safe anywhere,
-    # but if a write is being asked for, refusing before spending a request is
-    # both cheaper and much clearer than failing three steps later.
+    # Refuse a write up front. The client enforces this regardless, so the check
+    # here is only to answer at zero cost and with a clearer message than a
+    # failure three steps in. Probing is read-only and safe anywhere.
     if feature_studio_id:
         try:
-            ScratchPolicy().check(document_id)
-        except WriteRefused as exc:
+            policy = get_client().write_policy
+        except Exception as exc:  # noqa: BLE001 - config problems answer first
+            return _explain(exc)
+        if not policy.allows(document_id):
             return json.dumps({
                 "ok": False, "stage": "write_safety",
-                "api_requests_used": 0, "error": str(exc)}, indent=2)
+                "api_requests_used": 0,
+                "error": str(policy.refuse(document_id))}, indent=2)
 
     # --- Layers 3-4: parameters, free -----------------------------------
     problems = validate_params(template, parameters)

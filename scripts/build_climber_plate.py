@@ -8,20 +8,22 @@ Gearbox Part Studio. Idempotent: run it again after changing the design in
 `src/skills/climber_plate.py` and it edits what is already there rather than
 stacking up duplicates.
 
-TWO THINGS THIS SCRIPT IS CAREFUL ABOUT, both learned the hard way:
+The careful part — write, compile, insert, repoint, and roll back a failed
+insert — now lives in `src.skills.apply.persist_feature`, so this script and the
+MCP tool cannot drift apart. Two rules it enforces, both learned the hard way:
 
   * The Feature Studio source is NOT restored afterwards. `apply_module`'s
-    default is to put the old source back, which is right for verifying a
-    template and catastrophic here — a custom feature is pinned to the
-    microversion that defined it, so restoring strands it in ERROR forever.
+    default puts the old source back, which is right for verifying a template
+    and catastrophic here — a custom feature is pinned to the microversion that
+    defined it, so restoring strands it in ERROR forever.
 
   * Rewriting the source moves that microversion. Any feature already inserted
     still points at the old one, so after every rewrite the inserted feature is
     updated with the fresh namespace. Skipping that is precisely how the
     document ended up with a dead `Boom 1`.
 
-Writes are confined to the scratch allowlist by `ScratchPolicy`. Never point
-this at a team's robot document.
+Writes are confined to the allowlist in `robot.toml`, enforced inside the client
+itself. Never point this at a team's robot document.
 """
 
 from __future__ import annotations
@@ -34,7 +36,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.api.onshape_client import OnshapeApiClient, OnshapeConfigError  # noqa: E402
-from src.skills.apply import ScratchPolicy, WriteRefused, apply_module  # noqa: E402
+from src.api.write_policy import WritePolicy, WriteRefused  # noqa: E402
+from src.skills.apply import persist_feature  # noqa: E402
 from src.skills.climber_plate import (  # noqa: E402
     VOLUME_TOLERANCE_PCT,
     plate_geometry,
@@ -81,7 +84,9 @@ async def main() -> int:
     print(f"module is {len(module):,} characters\n")
 
     try:
-        ScratchPolicy().check(DOCUMENT_ID)
+        policy = WritePolicy.from_manifest()
+        if not policy.allows(DOCUMENT_ID):
+            raise policy.refuse(DOCUMENT_ID)
     except WriteRefused as exc:
         print(f"Refused:\n  {exc}", file=sys.stderr)
         return 2
@@ -95,64 +100,33 @@ async def main() -> int:
     async with client:
         studio_id = await ensure_feature_studio(client)
 
-        compiled, problems = await apply_module(
+        # The write / compile / insert / repoint sequence this script worked out
+        # now lives in `persist_feature`, so the MCP tool and this script cannot
+        # drift apart. It also adds what this script lacked: an insert that
+        # fails to regenerate is rolled back rather than left in the tree.
+        result = await persist_feature(
             client, module,
             document_id=DOCUMENT_ID,
             workspace_id=WORKSPACE_ID,
             feature_studio_id=studio_id,
-            restore=False,          # deliberate; see the module docstring
+            part_studio_id=PART_STUDIO_ID,
+            feature_name=FEATURE_NAME,
         )
-        for problem in problems:
+        for problem in result.problems:
             print(f"  [{problem.severity.value}] {problem.message}")
-        if not compiled:
-            print("\nThe module did not compile. Run "
-                  "scripts/verify_plate_geometry.py for a line number.",
+        if not result.ok:
+            print("\nRun scripts/verify_plate_geometry.py for a line number.",
                   file=sys.stderr)
             return 1
-        print("module compiled")
 
-        specs = (await client.get(
-            f"/featurestudios/d/{DOCUMENT_ID}/w/{WORKSPACE_ID}/e/{studio_id}"
-            f"/featurespecs")).json()
-        spec = specs["featureSpecs"][0]
-        namespace = spec["namespace"]
-        print(f"feature type : {spec['featureType']}")
-        print(f"namespace    : {namespace}")
+        print(f"feature type : {result.feature_type}")
+        print(f"namespace    : {result.namespace}")
+        print("updated existing feature" if result.updated
+              else "inserted a new feature")
 
         part_studio = (
             f"/partstudios/d/{DOCUMENT_ID}/w/{WORKSPACE_ID}/e/{PART_STUDIO_ID}"
         )
-        existing = (await client.get(f"{part_studio}/features")).json()
-        already = next(
-            (f for f in existing.get("features", [])
-             if f.get("featureType") == spec["featureType"]),
-            None,
-        )
-
-        payload = {
-            "btType": "BTMFeature-134",
-            "namespace": namespace,
-            "name": FEATURE_NAME,
-            "featureType": spec["featureType"],
-            "suppressed": False,
-            "parameters": [],
-            "returnAfterSubfeatures": False,
-            "subFeatures": [],
-        }
-
-        if already is None:
-            response = await client.post(
-                f"{part_studio}/features", json_body={"feature": payload})
-            print(f"inserted feature ({response.status_code})")
-        else:
-            # Repoint the existing feature at the microversion just written.
-            payload["featureId"] = already["featureId"]
-            response = await client.post(
-                f"{part_studio}/features/featureid/{already['featureId']}",
-                json_body={"feature": payload})
-            print(f"updated existing feature {already['featureId']} "
-                  f"({response.status_code})")
-
         features = (await client.get(f"{part_studio}/features")).json()
         states = features.get("featureStates", {})
         print("\nGearbox Part Studio:")
