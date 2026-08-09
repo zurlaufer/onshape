@@ -238,32 +238,55 @@ async def onshape_find_part(
 
 
 @mcp.tool
-async def frc_list_templates() -> str:
+async def frc_list_templates(name: str | None = None) -> str:
     """List the FRC CAD templates this server can generate and apply.
 
     Call this before `frc_apply_template` to see each template's parameters,
     units and constraints. Templates are hand-written and pre-verified: you
     choose one and supply its parameters rather than writing FeatureScript.
+
+    Args:
+        name: Optional. One template's name, for its full parameter list on its
+            own. Omit to see everything; if that no longer fits the response
+            ceiling you will get summaries only, and can then ask by name.
     """
-    payload = {
-        "templates": [
-            {
-                "name": t.name,
-                "summary": t.summary,
-                "parameters": [s.to_dict() for s in t.parameters()],
-            }
-            for t in TEMPLATES.values()
-        ],
-        "note": (
-            "Parameters are validated locally first (dimensional arithmetic, "
-            "no API cost). Impossible designs are rejected before Onshape is "
-            "contacted."
-        ),
-    }
-    return fit_response(
-        [lambda: payload],
-        narrow_hint="Ask about one template by name if this is too long.",
+    if name is not None:
+        template = TEMPLATES.get(name)
+        if template is None:
+            return json.dumps(
+                {"error": f"Unknown template {name!r}.",
+                 "available": sorted(TEMPLATES)}, indent=2)
+        return fit_response(
+            [lambda: {"template": _template_detail(template)}],
+            narrow_hint="This single template's schema is already minimal.",
+        )
+
+    note = (
+        "Parameters are validated locally first (dimensional arithmetic, no API "
+        "cost). Impossible designs are rejected before Onshape is contacted."
     )
+    # Richest first. The library grows, the ceiling does not: three templates
+    # already fill about 70% of it, so the summaries-only fallback is what keeps
+    # this tool working at ten. Without it the model would get an error telling
+    # it to narrow a call that had no way to narrow.
+    return fit_response(
+        [
+            lambda: {"templates": [_template_detail(t) for t in TEMPLATES.values()],
+                     "note": note},
+            lambda: {"templates": [{"name": t.name, "summary": t.summary}
+                                   for t in TEMPLATES.values()], "note": note},
+            lambda: {"templates": sorted(TEMPLATES), "note": note},
+        ],
+        narrow_hint="Call frc_list_templates(name=...) for one template's parameters.",
+    )
+
+
+def _template_detail(template) -> dict:
+    return {
+        "name": template.name,
+        "summary": template.summary,
+        "parameters": [s.to_dict() for s in template.parameters()],
+    }
 
 
 @mcp.tool

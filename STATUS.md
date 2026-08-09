@@ -72,7 +72,8 @@ verified infrastructure and zero questions from an actual FRC student.
 | `tests/test_context_graph.py` | 35 tests over a synthetic fixture. |
 | `tests/test_skill_validation.py` | 59 tests incl. captured Onshape notice shapes. |
 | `tests/test_onshape_client.py` | 50 tests: signing golden vector, retry table, quota, timeouts, TTL. |
-| `tests/test_plate_pocket.py` | 26 tests; the mass figure is pinned to a kernel measurement. **213 total**. |
+| `tests/test_plate_pocket.py` | 26 tests; the mass figure is pinned to a kernel measurement. |
+| `tests/test_mcp_tools.py` | 15 tests on the tool surface itself — the free paths. **228 total**. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -86,7 +87,7 @@ verified infrastructure and zero questions from an actual FRC student.
 ## Verify everything (about 30 seconds)
 
 ```bash
-./.venv/Scripts/python.exe -m pytest tests/ -q          # 213 passed, offline
+./.venv/Scripts/python.exe -m pytest tests/ -q          # 228 passed, offline
 ./.venv/Scripts/python.exe scripts/check_no_print.py    # ok: no print() under src/
 ./.venv/Scripts/python.exe scripts/smoke_auth.py        # Gate 1 passed
 ```
@@ -512,13 +513,35 @@ Live results for `plate_pocket_pattern`, 2026-08-09:
 | Sheet body instead of a solid | Refused with a readable reason (previously a silent false pass) |
 | 13 columns → 6.0 mm pockets | Refused locally, **0 requests** — the cutter cannot enter |
 
+### The dry run before the student test (2026-08-09)
+
+Rehearsing a realistic request found a defect the student would have hit instead. Imperial input
+converts cleanly (`8 x 8 inch gusset, 1/4 inch thick` → sensible pockets, correct 71%-removal
+warning), but **`frc_list_templates` was 5,661 bytes for three templates — about 1,900 each,
+against an 8 KB ceiling.** It passed `fit_response` a single candidate, so at roughly five
+templates it would have fallen straight through to *"Result too large"* with the advice *"ask about
+one template by name"* — and no tool took a name. Zero template information and no way forward.
+
+Now: `frc_list_templates(name=...)` exists, and the listing degrades to summaries then to names.
+Simulated at 13 templates it stays valid, keeps every name, and the hint points at a real call.
+
+**The lesson generalises: rehearse the path before spending a person's attention on it.**
+
 ### What to do next
 
-1. **Put it in front of one student.** The only remaining check I cannot run. Everything below is
-   optional; this is not.
-2. **Put a solid plate in the scratch Part Studio.** One minute in the UI (rectangle, extrude).
-   Without it no plate template can be probed end to end against stored geometry — today only the
-   verification script has a solid, and it builds its own.
+1. **Put it in front of one student.** The only remaining check that cannot be run from here.
+   Everything else is optional; this is not. Protocol: give a real task from their own robot, say
+   nothing about templates, do not help, and record where they stall. Three stalls, three different
+   fixes — never reaching a template means the tool descriptions are wrong; reaching it but not
+   being able to fill parameters means our vocabulary is not theirs; getting the FeatureScript and
+   not knowing what to do with it means **verify-and-revert was the wrong call** and persistence
+   matters more than judged. That last one is the deferred decision, and this test is what settles
+   it. Watch the quota: one key, ~100 FeatureScript evaluations a day, shared.
+2. **Put a solid plate in the scratch Part Studio.** One minute in the UI: sketch a 150 x 150 mm
+   rectangle on the Top plane, extrude 6.35 mm blind. Those dimensions match what is already
+   verified against the kernel, so pass/fail is unambiguous. Without it no plate template can be
+   probed end to end against stored geometry — today only the verification script has a solid, and
+   it builds its own inside the probe.
 3. **`stress.py`** — beam deflection and safety factors. Pure maths, no auth, unblocked, good work
    to hand to a student. It would let `gearbox_bore_pattern` *judge* whether a plate survives the
    1,515 N it currently only reports, the same way `plate_pocket_pattern` now judges grams.
