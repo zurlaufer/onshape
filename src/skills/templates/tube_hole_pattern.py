@@ -175,16 +175,19 @@ class TubeHolePattern:
     var positions = [{pos_literal}];
     var tubeBox = evBox3d(context, {{ "topology" : qEverything(EntityType.BODY) }});
     var actualLength = tubeBox.maxCorner[0] - tubeBox.minCorner[0];
+    // Whole millimetres: `toString` on a length can render 150 mm as
+    // "0.15000000000000002 meter", which reads as a broken tool.
     if (actualLength < {length:g} * millimeter)
     {{
-        throw regenError("Tube is " ~ toString(actualLength) ~
-            " but the pattern was computed for {length:g} mm.");
+        throw regenError("Tube is " ~ toString(round(actualLength / millimeter)) ~
+            " mm but the pattern was computed for {length:g} mm.");
     }}
     for (var p in positions)
     {{
         if (p > actualLength - {diameter / 2:g} * millimeter)
         {{
-            throw regenError("Hole at " ~ toString(p) ~ " falls outside the tube.");
+            throw regenError("Hole at " ~ toString(round(p / millimeter)) ~
+                " mm falls outside the tube.");
         }}
     }}
     return size(positions);

@@ -312,11 +312,17 @@ class PlatePocketPattern:
     var pocketU = (uSpan - 2 * border - {cols - 1} * rib) / {cols};
     var pocketV = (vSpan - 2 * border - {rows - 1} * rib) / {rows};
 
+    // Report in whole millimetres. `toString` on a length yields things like
+    // "0.15000000000000002 meter", and a student reading that learns nothing
+    // except that the tool is untrustworthy.
+    var uText = toString(round(uSpan / millimeter)) ~ " mm";
+    var vText = toString(round(vSpan / millimeter)) ~ " mm";
+
     if (pocketU <= 0 * millimeter || pocketV <= 0 * millimeter)
     {{
-        throw regenError("The selected face is " ~ toString(uSpan) ~ " x " ~
-            toString(vSpan) ~ ", too small for {cols} x {rows} pockets with " ~
-            toString(border) ~ " border and " ~ toString(rib) ~ " ribs.");
+        throw regenError("The selected face is " ~ uText ~ " x " ~ vText ~
+            ", too small for {cols} x {rows} pockets with {border:g} mm " ~
+            "border and {rib:g} mm ribs.");
     }}"""
 
     def render_probe(self, params: dict[str, Any]) -> str:
@@ -367,9 +373,8 @@ class PlatePocketPattern:
     var largestSpan = max(uSpan, vSpan);
     if (abs(largestSpan - {stated:g} * millimeter) > 1 * millimeter)
     {{
-        throw regenError("The largest planar face is " ~ toString(uSpan) ~ " x " ~
-            toString(vSpan) ~ " but the pockets were sized for a {plate_w:g} x " ~
-            "{plate_l:g} mm plate.");
+        throw regenError("The largest planar face is " ~ uText ~ " x " ~ vText ~
+            " but the pockets were sized for a {plate_w:g} x {plate_l:g} mm plate.");
     }}
 
     return {{ "pocketU_mm" : pocketU / millimeter, "pocketV_mm" : pocketV / millimeter }};
