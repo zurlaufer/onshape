@@ -40,6 +40,7 @@ __all__ = [
     "ProbeResult",
     "ScratchPolicy",
     "WriteRefused",
+    "decode_fsvalue",
     "probe_body",
     "apply_module",
 ]
@@ -145,6 +146,30 @@ def _notice_to_problem(notice: dict[str, Any]) -> Problem:
     )
 
 
+def decode_fsvalue(node: Any) -> Any:
+    """Onshape's FSValue wire format into plain Python.
+
+    A lambda returning `{ "pocketU_mm" : 36.7 }` comes back as roughly 400 bytes
+    of `btType` wrappers and nested `value` keys. Handing that to a model is
+    payload spent on noise, and reading it by hand is how three separate
+    debugging sessions started.
+
+    Maps arrive as a list of entries carrying `key` and `value`, so a list whose
+    every element decodes to a pair becomes a dict; anything else stays a list.
+    """
+    if isinstance(node, list):
+        items = [decode_fsvalue(n) for n in node]
+        if items and all(isinstance(i, tuple) and len(i) == 2 for i in items):
+            return dict(items)
+        return items
+    if not isinstance(node, dict):
+        return node
+    if "key" in node and "value" in node:
+        return (decode_fsvalue(node["key"]), decode_fsvalue(node["value"]))
+    inner = node.get("value")
+    return decode_fsvalue(inner) if isinstance(inner, (list, dict)) else inner
+
+
 async def probe_body(
     client: OnshapeApiClient,
     body: str,
@@ -171,7 +196,7 @@ async def probe_body(
     value = None
     if ok:
         result = payload.get("result") or {}
-        value = result.get("value")
+        value = decode_fsvalue(result.get("value"))
 
     logger.debug("probe: ok=%s notices=%d", ok, len(notices))
     return ProbeResult(ok=ok, problems=problems, value=value)

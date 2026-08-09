@@ -1,6 +1,7 @@
 # Project Status
 
-**Last verified: 2026-08-07** — Step 4 done: hardened client, per-bucket quota governor, 187 tests.
+**Last verified: 2026-08-09** — Third template done. Face selection works, and our physics now
+checks out against Onshape's kernel to 0.0000%. 213 tests.
 
 > Maintained by Claude. Updated at the end of any session that changes project state, so picking
 > the project back up doesn't require re-scanning the codebase or re-running discovery. If
@@ -22,8 +23,17 @@ per-endpoint and the one we depend on most is **~84**. And "mass properties time
 about Onshape at all; it was our own flat 30 s. Each of those sat in this file as settled fact
 until it was checked.
 
-The next real work is the third template (plate pocketing), which is the first one that needs
-**face selection** — the fragile query territory the whole validation stack was built for.
+**The third template is done and face selection was not the wall it looked like.**
+`plate_pocket_pattern` compiled first try — the first template that did, after the first two each
+needed a live bisection. The accumulated rules (a Query parameter needs a Filter, avoid reserved
+words, probe before compiling) are now doing their job.
+
+The bigger result is that the project stopped only ever asking *"did Onshape accept it?"* and
+started asking *"is the number we told the student true?"* — and the answer, for the one figure a
+team cannot eyeball, is yes to four decimal places.
+
+**The remaining gap is unchanged and is not technical: nobody has used this.** Thirteen commits of
+verified infrastructure and zero questions from an actual FRC student.
 
 ---
 
@@ -53,14 +63,16 @@ The next real work is the third template (plate pocketing), which is the first o
 | `src/context/graph.py` | `AssemblyGraph` — named tree + definition dedup. Pure, no I/O. |
 | `src/context/queries.py` | Narrow queries behind a hard 8 KB response ceiling. |
 | `src/physics/motors.py` | Kraken X60 (trapezoidal + FOC), NEO V1.1. Dependency-free. Vendor-verified constants. |
-| `src/skills/templates/` | `Template` protocol + **two** templates: `tube_hole_pattern` and `gearbox_bore_pattern`. |
+| `src/skills/templates/` | `Template` protocol + **three** templates: `tube_hole_pattern`, `gearbox_bore_pattern`, `plate_pocket_pattern`. |
 | `src/skills/validate.py` | Layers 1-4: structural, symbol, parameter, contract. All free. |
-| `src/skills/symbols.py` | Curated std-library symbol table; warnings only, never blocks. |
-| `src/skills/apply.py` | Layer 5 probe (real diagnostics) + layer 6 compile, scratch allowlist. |
+| `src/skills/symbols.py` | ~130 hand-typed symbols. **Net-negative to date** — see Settled facts. Warnings only. |
+| `src/skills/apply.py` | Layer 5 probe (real diagnostics) + layer 6 compile, scratch allowlist, FSValue decoding. |
+| `scripts/verify_pocket_geometry.py` | **Checks our grams against Onshape's kernel.** 1 request, builds its own test plate. |
 | `tests/test_motors.py` | 41 tests, no network or credentials needed. |
 | `tests/test_context_graph.py` | 35 tests over a synthetic fixture. |
 | `tests/test_skill_validation.py` | 59 tests incl. captured Onshape notice shapes. |
-| `tests/test_onshape_client.py` | 50 tests: signing golden vector, retry table, quota, timeouts, TTL. **187 total**. |
+| `tests/test_onshape_client.py` | 50 tests: signing golden vector, retry table, quota, timeouts, TTL. |
+| `tests/test_plate_pocket.py` | 26 tests; the mass figure is pinned to a kernel measurement. **213 total**. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -74,9 +86,15 @@ The next real work is the third template (plate pocketing), which is the first o
 ## Verify everything (about 30 seconds)
 
 ```bash
-./.venv/Scripts/python.exe -m pytest tests/ -q          # 187 passed, offline
+./.venv/Scripts/python.exe -m pytest tests/ -q          # 213 passed, offline
 ./.venv/Scripts/python.exe scripts/check_no_print.py    # ok: no print() under src/
 ./.venv/Scripts/python.exe scripts/smoke_auth.py        # Gate 1 passed
+```
+
+The one live check worth its request — our arithmetic against Onshape's geometry:
+
+```bash
+./.venv/Scripts/python.exe scripts/verify_pocket_geometry.py   # 1 request
 ```
 
 ---
@@ -180,6 +198,58 @@ Found by bisecting our own gearbox template:
 Non-Query parameters (`isLength(...)`) need no filter. This is the second time a hand-written
 template was wrong in a way only Onshape could reveal, which is the argument for keeping layer 6
 in the loop even though layer 5 is now informative.
+
+**Face selection works, and here are the mechanics.** This was the open question the project
+deferred for weeks; measured 2026-08-09 and closed.
+
+    var plane = evPlane(context, { "face" : definition.face });
+    var box   = evBox3d(context, { "topology" : definition.face,
+                                   "cSys" : planeToCSys(plane) });
+
+`evBox3d` takes a coordinate system, so a planar face measured in its **own** plane returns clean
+u/v extents with w = 0. That is what lets a pattern be laid out inside a face's real boundary
+instead of inside dimensions the caller claimed. In the module the face is a selection carrying
+`"Filter" : EntityType.FACE && GeometryType.PLANE`, so a bad pick is refused at selection time.
+
+**The evaluate endpoint runs real modelling operations, and persists nothing.** Also 2026-08-09,
+and it is the biggest capability found since the diagnostics. A single lambda can build a body,
+sketch on it, extrude, boolean, and measure the volume before and after — `makeId("...")` supplies
+the Id that a feature would normally receive. So **layer 5 is not limited to syntax and queries: it
+can verify the geometric outcome.** `scripts/verify_pocket_geometry.py` uses this to build a plate,
+pocket it, and check the grams we report against what the kernel actually removes.
+
+**First end-to-end check of a physics number against the kernel.** `plate_pocket_pattern` predicted
+**207.5 g** removed; Onshape measured **76,835 mm³**, which at 2700 kg/m³ is 207.5 g — a
+**0.0000%** disagreement. Until this, every "verified live" claim in the project meant *Onshape
+accepted it*, never *the number we told the student is true*.
+
+**The scratch Part Studio has NO solid bodies — 3 sheet bodies.** So every earlier template probe
+that "passed live" was measuring **surfaces**. The passes were real (the source parses, the queries
+resolve, the arithmetic runs) but weaker than they read, and this belongs next to the same lesson
+from spike 3a, where every test assembly turned out to be empty.
+
+The specific danger it exposed: **pocketing a sheet body completes the entire
+sketch/extrude/boolean chain, removes nothing, and reports success.** A false pass is worse than a
+failure because it looks like verification. Both the probe and the module now assert
+`BodyType.SOLID` first. **To fully exercise a template that needs a plate, the scratch document
+needs a solid one** — currently the only solid geometry in play is what the verification script
+builds inside its own probe.
+
+**Layer 2 (the symbol check) was doing net harm, and has been rewritten to say less.** On
+`plate_pocket_pattern` it flagged `planeToCSys`, `qOwnerBody` and `qSketchRegion` — all three valid,
+all three compiled and ran the same minute. Zero true catches to date. Two reasons, both of which
+had been assumed away:
+
+- **Its premise moved.** It was designed for model-authored FeatureScript. The model does not author
+  FeatureScript; it fills parameters into hand-verified templates. The only source this layer ever
+  sees is source already known to be good.
+- **Its list could never be complete.** `symbols.py` promised `scripts/extract_std_symbols.py` and a
+  `fs_symbols.json` fixture. **Neither was ever written**, so the check has always run against ~130
+  hand-typed names out of thousands.
+
+The layer stays (it costs nothing and matters again if unverified bodies ever return) but its
+message now states plainly that an unknown name is not evidence of an error. A warning that is
+usually wrong trains the reader to skip the one time it is right.
 
 **`box` is a reserved word in FeatureScript.** `var box = evBox3d(...)` fails with
 `mismatched input 'box' expecting ID`. Found when the layer-5 probe rejected our own
@@ -385,6 +455,17 @@ returns no error message** for either compile or regeneration — the correction
 specified cannot work as written. Researched cross-domain solutions to the payload problem and
 recorded four composable patterns. `.mcp.json` committed with a macOS path caveat.
 
+**2026-08-09 — the third template, and the first honest geometry check.** `plate_pocket_pattern`
+built and verified; face selection turned out to be tractable and it compiled first try. Two
+capabilities found along the way: `evBox3d` accepts a `cSys`, so a face can be measured in its own
+plane; and **the evaluate endpoint runs real modelling operations without persisting**, so layer 5
+can check geometric outcomes rather than only syntax and queries. Used that to verify our mass
+arithmetic against Onshape's kernel — 0.0000% apart. Two uncomfortable findings recorded rather
+than smoothed over: the scratch Part Studio holds **no solid bodies**, so earlier template probes
+were passing against surfaces, and pocketing a surface reported success while removing nothing;
+and the layer-2 symbol check has produced only false positives, because its premise moved and the
+extractor its docstring promised was never written.
+
 **2026-08-07 — Step 4, and three corrections to this file.** Hardened the client: classified
 retries (not blanket), per-endpoint timeouts, a per-bucket quota governor, a typed error
 hierarchy, and 50 offline tests including the signing golden vector that had been missing since
@@ -422,15 +503,27 @@ claim itself is still open.
 each write and restores at the end. Counts now come from the client's own ledger, so they cannot
 drift from reality again — and a retry is visible in the number rather than hidden by it.
 
-What remains, none of it blocked:
+Live results for `plate_pocket_pattern`, 2026-08-09:
 
-1. **A third template — plate pocketing.** The first genuinely hard one: it needs **face
-   selection**, i.e. the fragile topological-query territory FM1 warned about. It is the first
-   template that will really exercise layer 5's diagnostics rather than confirm them. Note the
-   cost: that loop runs on the **~84** bucket.
-2. **`stress.py`** — beam deflection and safety factors. Pure maths, no auth, fully unblocked,
-   good work to hand to a student. It would let `gearbox_bore_pattern` *judge* whether a plate
-   survives the 1,515 N it currently only reports.
-3. **Context layer v2** — mass properties are now usable (1.5 KB, 40.8 s). Worth folding into a
-   tool, though 40.8 s is slow for an interactive call, so consider caching it by microversion
-   the way the assembly definition already is.
+| Case | Result |
+|---|---|
+| 3x3 grid, module | Compiled **first try**, restored, 7 requests |
+| Grid arithmetic vs the kernel | 76,835 mm³ predicted, 76,835 mm³ measured — **0.0000%** |
+| Sheet body instead of a solid | Refused with a readable reason (previously a silent false pass) |
+| 13 columns → 6.0 mm pockets | Refused locally, **0 requests** — the cutter cannot enter |
+
+### What to do next
+
+1. **Put it in front of one student.** The only remaining check I cannot run. Everything below is
+   optional; this is not.
+2. **Put a solid plate in the scratch Part Studio.** One minute in the UI (rectangle, extrude).
+   Without it no plate template can be probed end to end against stored geometry — today only the
+   verification script has a solid, and it builds its own.
+3. **`stress.py`** — beam deflection and safety factors. Pure maths, no auth, unblocked, good work
+   to hand to a student. It would let `gearbox_bore_pattern` *judge* whether a plate survives the
+   1,515 N it currently only reports, the same way `plate_pocket_pattern` now judges grams.
+4. **Context layer v2** — mass properties work now (1.5 KB, 40.8 s). Worth a tool, but cache it by
+   microversion; 40.8 s is slow for an interactive call.
+
+Not worth doing: extracting the full FeatureScript symbol table, unless model-authored bodies
+return. See the layer-2 entry in Settled facts.

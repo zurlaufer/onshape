@@ -114,9 +114,12 @@ def validate_source(source: str, *, is_module: bool) -> list[Problem]:
     for name in unknown[:8]:
         problems.append(Problem(
             Severity.WARNING,
-            f"{name!r} is not in the known FeatureScript standard library.",
-            suggestion="Check the spelling, or confirm it is defined locally. "
-                       "The symbol table may also be out of date.",
+            f"{name!r} is not in our (small, hand-written) list of FeatureScript "
+            f"symbols. This is not evidence that it is wrong — the list covers a "
+            f"fraction of the standard library.",
+            suggestion="Onshape's evaluate endpoint is the authority: it reports "
+                       "an unknown function by name. Treat this as a spelling "
+                       "prompt only.",
         ))
     if len(unknown) > 8:
         problems.append(Problem(

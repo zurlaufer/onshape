@@ -10,11 +10,13 @@ Template bodies are written once, verified against Onshape, and then left alone.
 
 from .base import Problem, Severity, Template, TemplateError
 from .gearbox_bore_pattern import GearboxBorePattern
+from .plate_pocket_pattern import PlatePocketPattern
 from .tube_hole_pattern import TubeHolePattern
 
 #: Every template the skill can apply. Keep this small and deliberate.
 TEMPLATES: dict[str, Template] = {
-    t.name: t for t in (TubeHolePattern(), GearboxBorePattern())
+    t.name: t
+    for t in (TubeHolePattern(), GearboxBorePattern(), PlatePocketPattern())
 }
 
 __all__ = ["TEMPLATES", "Problem", "Severity", "Template", "TemplateError"]
