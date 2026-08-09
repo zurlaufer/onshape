@@ -234,6 +234,42 @@ Non-Query parameters (`isLength(...)`) need no filter. This is the second time a
 template was wrong in a way only Onshape could reveal, which is the argument for keeping layer 6
 in the loop even though layer 5 is now informative.
 
+**The FRC community already maintains 37 FeatureScripts, and we can drive them from the API.**
+Found 2026-08-09/10, and it is the most consequential fact in this file because it says what this
+project should *not* build.
+
+[FRCDesign.org](https://frcdesign.org/resources/featurescripts/) lists 37 maintained scripts. Three
+of them are our three templates, done better: **Tube Converter** (punched tube with hole patterns),
+**CheeseIt!** (isogrid, hex and circle lightening — ours does rectangles with square corners),
+**Spur Gear**. Also Gusset Generator, Robot Shaft, Robot Spacer, Belt & Chain Gen, Auto Layout.
+
+The namespace for a feature living in someone else's document is:
+
+    d{documentId}::v{versionId}::e{elementId}::m{microversionId}
+
+The inner `e...::m...` half comes back from `featurespecs`; the `d...::v...` half must be prepended.
+**Read the spec through a version, not a workspace** — a workspace microversion is not reachable
+from another document and the insert returns **404**. That 404 is the whole trap, and it looks like
+a wrong URL rather than a wrong reference. Verified end to end by
+`scripts/spike_community_featurescript.py`: insert accepted 200, the feature appears in the tree,
+cleanup removes it.
+
+Version pinning is a bonus, not a cost: the library cannot change under a design that already
+shipped.
+
+**Not yet proven: setting parameters.** Tube Converter has 20 and its spec is 30 KB of
+`BTParameterSpec` types. The cheap route, from the Onshape forum, is to add the feature once by hand
+in the UI, `GET /features`, and copy the parameter block — the read shape and the write shape match.
+Note the size: 30–88 KB per spec is far past the 8 KB response ceiling, so any index of these must
+distil the schema rather than carry it.
+
+**Consequence.** Our three templates were reinventing a mature ecosystem, worse — the same
+unchecked-assumption failure that already cost us the payload model, the error model, the quota
+model and the mass-properties write-off. But the same list shows the niche: **nothing among the 37
+models the torque of a rotating-arm climber or searches gear stacks for shaft clearance.** The
+community owns geometry generation; this project owns the physics that decides the numbers, and
+verification against the kernel.
+
 **Face selection works, and here are the mechanics.** This was the open question the project
 deferred for weeks; measured 2026-08-09 and closed.
 
