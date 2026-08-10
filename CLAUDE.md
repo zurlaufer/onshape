@@ -13,7 +13,7 @@ a session read STATUS.md twice, and still hit it.)
 ## Running things
 
 ```bash
-./.venv/Scripts/python.exe -m pytest tests/ -q      # offline, ~280 tests
+./.venv/Scripts/python.exe -m pytest tests/ -q      # offline, ~377 tests
 ./.venv/Scripts/python.exe scripts/check_no_print.py
 ./.venv/Scripts/python.exe scripts/smoke_auth.py    # 1 request
 ```
@@ -68,7 +68,21 @@ constants), `climber.py` (over-centre lever), `geartrain.py` (shaft clearance).
 - **Report lengths in whole millimetres.** `toString()` on a length renders
   `0.15000000000000002 meter`, which reads as a broken tool.
 
-Before writing FeatureScript, `grep featurescript/` for a worked example.
+Before writing FeatureScript, `grep featurescript/` for a worked example. Four
+are committed there — the face idiom, a build-cut-measure probe, a pocket grid,
+and the `box` failure with its diagnostic. Regenerate with
+`scripts/build_corpus.py`; `tests/test_corpus.py` fails if they drift.
+
+## The team's numbers beat generic FRC ones
+
+`standards.toml` holds the shop rules the checks enforce — minimum rib, border,
+web, end mill radius. **Never invent one of these numbers.** If the team has not
+set a value the declared default applies and says so; a value they *have* set is
+quoted in the refusal. Add a new settable rule to `SPECS` in
+`src/skills/standards.py`, never as a bare constant in a template.
+
+Physical facts (density, bearing OD, hex circumradius) are **not** settable —
+a team cannot vote on what aluminium weighs.
 
 ## Conventions
 

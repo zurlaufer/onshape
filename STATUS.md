@@ -1,7 +1,16 @@
 # Project Status
 
 **Last verified: 2026-08-10** — Tool surface reshaped around `where`; writes persist; the
-probe is cached against a ~100/day bucket. 350 tests, ~16 s.
+probe is cached against a ~100/day bucket. The worked-example corpus exists at last, and
+shop rules moved out of the templates into `standards.toml`. 377 tests, ~20 s.
+
+> **Planning context, and it outranks everything below.** The team still CADs in
+> **SolidWorks** and expects to through the 2027 season; Onshape is a 2028 decision this
+> tool is meant to inform. So *"put it in front of one student"* — the next action this
+> file has carried since Step 4 — **cannot run**, because no student does Onshape CAD
+> here. What happens next is an evaluation demo, which measures something else entirely.
+> Work that pays off on a SolidWorks team today now outranks work that only pays off
+> after a migration.
 
 > Maintained by Claude. Updated at the end of any session that changes project state, so picking
 > the project back up doesn't require re-scanning the codebase or re-running discovery. If
@@ -74,6 +83,10 @@ worth repeating — see `FINDINGS.md`.
 | `src/skills/validate.py` | Layers 1-4: structural, symbol, parameter, contract. All free. |
 | `src/skills/symbols.py` | ~130 curated symbols **plus names learned from every probe**. Warnings only. |
 | `src/skills/probe_cache.py` | Hash-keyed probe cache + the worked-example corpus. Protects the ~100/day bucket. |
+| `src/skills/corpus.py` | **What goes in `featurescript/`, and where each example comes from.** Two are generated from the renderers, so they cannot drift. |
+| `featurescript/` | **Committed, and no longer empty.** Four worked examples: the face idiom, build-cut-measure, the pocket grid, and the `box` failure with its diagnostic. Grepped, never loaded whole. |
+| `src/skills/standards.py` | **The team's shop rules as enforced numbers.** Declared defaults + `standards.toml` overrides. An unknown key is refused at load, never ignored. |
+| `standards.toml` | **Committed, and ships entirely commented out.** The mechanism without invented numbers. |
 | `src/skills/apply.py` | Probe, compile, **persist** (idempotent, rolls back a failed insert), FSValue decoding. |
 | `scripts/verify_pocket_geometry.py` | **Checks our grams against Onshape's kernel.** 1 request, builds its own test plate. |
 | `scripts/size_climber.py` | The whole sizing argument, offline and free. Run it when mass, arm or motor count changes. |
@@ -94,7 +107,10 @@ worth repeating — see `FINDINGS.md`.
 | `tests/test_mcp_tools.py` | 22 tests on the tool surface — the paths that must answer for free. |
 | `tests/test_workspace.py` | 25 tests: URL parsing, `where` resolution, the write boundary. |
 | `tests/test_persist.py` | 11 tests: no restore, repointing, rollback asymmetry. |
-| `tests/test_probe_cache.py` | 19 tests: hashing, cache hits, learned symbols, the corpus. **350 total**. |
+| `tests/test_probe_cache.py` | 19 tests: hashing, cache hits, learned symbols, the corpus. |
+| `tests/test_corpus.py` | 8 tests. Pins that the directory exists, that no example has drifted from its renderer, and that every verified one is a sendable bare lambda. |
+| `tests/test_standards.py` | 17 tests: overrides, refusal of typo'd names, zero-disables-a-check, and that no file means no behaviour change. **377 total**. |
+| `scripts/build_corpus.py` | Regenerates `featurescript/`. Offline, free, idempotent. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -618,6 +634,39 @@ project whose tests are meant to be run constantly; splitting shape from orienta
 13 s. And the build script's first drift check was an absolute 1e-3 mm³, which the kernel fails by
 rounding on any part this size — tolerances against a CAD kernel have to be relative.
 
+**2026-08-10 — the SolidWorks reframe, and two things that survive it.** Planning the
+next round turned up the fact that reorders the whole file: **the team is on SolidWorks
+and will be for the 2027 season.** The "put it in front of a student" gate cannot run.
+Two pieces of work were chosen precisely because they pay off either way.
+
+**The corpus existed only as an instruction.** `CLAUDE.md` is loaded on every request and
+tells each session to grep `featurescript/`. The directory did not exist — `promote()`
+was written, documented, and never called. An always-loaded instruction pointing at
+nothing costs a tool call to discover. Four examples now live there, two generated from
+the renderers themselves so they cannot drift, and a test fails when they do. The `box`
+failure is in `failures/` with the message Onshape gives — no line number, because both
+recorded sightings were in longer bodies and inventing a position would be its own small
+version of the mistake this file keeps correcting.
+
+**Shop rules left the templates.** Eleven numbers were hardcoded across three templates —
+minimum rib, border, web, edge, end mill radius, undercut tooth count. They are now
+declared in `src/skills/standards.py` with their reasons and overridable from
+`standards.toml`. Three decisions worth keeping:
+
+- **Overrides only.** No file means no behaviour change; the other 360 tests are the
+  evidence, and two tests state it outright so nobody "fixes" it.
+- **A typo'd key is refused at load**, with the valid spelling in the message. A standard
+  that silently does nothing is the worst outcome available — it looks configured and is
+  not enforced. Zero is refused too, for the same reason.
+- **Physical facts stay in code.** Density, bearing OD, hex circumradius. Making those
+  editable would invite tuning a density until the mass came out right.
+
+The refusal quotes the team's number *and says it is the team's* — but only when they set
+it. A default reads as engineering; a team value needs to be attributable, because a
+student who disagrees has to know whether to argue with the team or with us.
+
+`standards.toml` ships **entirely commented out**. The mechanism, with nothing invented.
+
 ---
 
 ## Next action
@@ -663,24 +712,48 @@ Simulated at 13 templates it stays valid, keeps every name, and the hint points 
 
 ### What to do next
 
-1. **Put it in front of one student.** The only remaining check that cannot be run from here.
-   Everything else is optional; this is not. Protocol: give a real task from their own robot, say
-   nothing about templates, do not help, and record where they stall. Three stalls, three different
-   fixes — never reaching a template means the tool descriptions are wrong; reaching it but not
-   being able to fill parameters means our vocabulary is not theirs; getting the FeatureScript and
-   not knowing what to do with it means **verify-and-revert was the wrong call** and persistence
-   matters more than judged. That last one is the deferred decision, and this test is what settles
-   it. Watch the quota: one key, ~100 FeatureScript evaluations a day, shared.
-2. **Put a solid plate in the scratch Part Studio.** One minute in the UI: sketch a 150 x 150 mm
-   rectangle on the Top plane, extrude 6.35 mm blind. Those dimensions match what is already
-   verified against the kernel, so pass/fail is unambiguous. Without it no plate template can be
-   probed end to end against stored geometry — today only the verification script has a solid, and
-   it builds its own inside the probe.
-3. **`stress.py`** — beam deflection and safety factors. Pure maths, no auth, unblocked, good work
-   to hand to a student. It would let `gearbox_bore_pattern` *judge* whether a plate survives the
-   1,515 N it currently only reports, the same way `plate_pocket_pattern` now judges grams.
-4. **Context layer v2** — mass properties work now (1.5 KB, 40.8 s). Worth a tool, but cache it by
-   microversion; 40.8 s is slow for an interactive call.
+Ordered by what it unlocks per unit of effort, under the SolidWorks constraint at the top
+of this file. Full reasoning and kill triggers in the plan; the short version:
 
-Not worth doing: extracting the full FeatureScript symbol table, unless model-authored bodies
-return. See the layer-2 entry in Settled facts.
+1. **Import one real SolidWorks subsystem into Onshape.** Pack & Go a gearbox or an
+   intake, import it, add it to `robot.toml` as read-only, and run the three read tools on
+   it. This decides whether the demo runs on *their* robot or on a stranger's. ~5 requests,
+   none from the scarce bucket. Research says instance structure survives the translation
+   while mates and the feature tree do not — which is exactly the half `graph.py` reads,
+   so the expected result is a pass. **Confirm it rather than assume it.**
+2. **`Constants.java` ↔ physics cross-check.** Parse the team's WPILib constants and check
+   the gear ratio, current limit and encoder conversion against `geartrain.py` and
+   `motors.py`. Zero Onshape, zero quota, offline, and it works on the 2027 SolidWorks
+   robot as it stands. **Blocked on input only:** the repo is not on this machine
+   (WPILib 2026 is installed; no `.java` anywhere). Spike first — read one real
+   `Constants.java` and judge whether the numbers can be extracted without guessing.
+   Do not write the parser before seeing it.
+3. **Community FeatureScript parameters.** Still the biggest capability opener, and the
+   most persuasive Onshape-specific argument for a migration — the 37 scripts have no
+   SolidWorks equivalent. Scope the spike to the half that can fail: setting a **query**
+   parameter, not a scalar. `BTMParameterQueryList-148` with `deterministicIds`, or a
+   `queryString` carrying `qCreatedBy(...)`; `frc_probe_featurescript` is what resolves an
+   entity to an id. If a query parameter needs a human picking geometry in the UI, the
+   capability is "scalars only" — record it and **do not build a tool**.
+4. **Design intent per subsystem.** Mass budget, envelope, requirement, decisions taken.
+   Needs the team's actual numbers; do not invent them. This is what would make a
+   mass-properties answer mean something ("4.2 kg against a 4 kg budget") rather than
+   being a number the Onshape UI already shows faster.
+5. **`stress.py`** — beam deflection and safety factors. Unblocked, pure maths, good work
+   to hand to a student. Ranked here honestly: it does not move the migration decision.
+   Worth knowing that only *half* of it is kernel-verifiable — second moment of area can
+   be measured the way pocket volume was; E and yield for 6061 are vendor data.
+6. **Put a solid plate in the scratch Part Studio.** One minute in the UI: 150 x 150 mm on
+   the Top plane, extruded 6.35 mm blind — dimensions already verified against the kernel,
+   so pass/fail is unambiguous. Without it no plate template can be probed end to end
+   against stored geometry.
+
+**Not worth doing:** an assembly builder (mates do not survive a SolidWorks import,
+`graph.py` deliberately discards the occurrence data it would need, and a wrong mate fails
+silently); mass properties as its own tool (40.8 s for a number the UI shows instantly —
+make it an argument on the overview tool if at all); Open Alliance RAG (trigger unmet, and
+item 2 is a higher-signal version of the same instinct); generic "infrastructure for future
+features" (the fourth-template mistake renamed — item 3 is the one with real demand);
+extracting the full FeatureScript symbol table, unless model-authored bodies return.
+
+**The 8th tool slot stays empty.** Only item 3 can earn it, and only if its spike passes.
