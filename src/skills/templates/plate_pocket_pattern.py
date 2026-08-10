@@ -46,31 +46,26 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..standards import standard, team_note
 from .base import ParamSpec, Problem, Severity, check_required, merge_defaults
 
 #: 6061-T6, the aluminium FRC plate stock is almost always cut from. kg/m^3.
 #: Density is what turns a pocket layout into the number a team actually cares
 #: about — grams off the robot — so it belongs here rather than in a comment.
+#:
+#: NOT a team standard, deliberately: a team cannot decide what aluminium
+#: weighs, and making it editable would invite tuning it until the mass came
+#: out right. See `src/skills/standards.py` for where that line is drawn.
 ALUMINIUM_6061_DENSITY = 2700.0
 
+# The four numbers below are **shop policy**, and a team with a waterjet works
+# to different ones than a team with a hand router. They live in
+# `standards.toml` under `[plate_pocket]`; the names kept here are the defaults
+# that apply when no team has said otherwise, so a fresh clone is unchanged.
+
 #: A 1/4" end mill is the FRC shop default; its radius is the smallest internal
-#: corner most teams can actually cut.
+#: corner most teams can actually cut. Override: plate_pocket.end_mill_radius_mm
 DEFAULT_CORNER_RADIUS_MM = 3.175
-
-#: Ribs thinner than this buckle rather than carry load, and are fragile to
-#: route. A shop rule of thumb, hence a warning.
-MIN_RIB_MM = 3.0
-
-#: Material left around the outside. Pockets running to the edge remove the
-#: flange that bolts and gussets need.
-MIN_BORDER_MM = 5.0
-
-#: A pocket floor thinner than this tears. Below it, cut through instead.
-MIN_FLOOR_MM = 1.0
-
-#: Past this fraction of the face area, the plate is more hole than plate and
-#: its bending stiffness falls off sharply.
-MAX_REMOVED_FRACTION = 0.6
 
 
 class PlatePocketPattern:
@@ -106,7 +101,9 @@ class PlatePocketPattern:
                       unit="mm", required=False),
             ParamSpec("corner_radius", "number",
                       "End mill radius, for the manufacturability check.",
-                      unit="mm", default=DEFAULT_CORNER_RADIUS_MM, required=False),
+                      unit="mm",
+                      default=standard("plate_pocket", "end_mill_radius_mm"),
+                      required=False),
         ]
 
     # ------------------------------------------------------------ geometry
@@ -148,6 +145,15 @@ class PlatePocketPattern:
         problems = check_required(self.parameters(), params)
         if any(p.is_error for p in problems):
             return problems
+
+        # Read once, at the top, so every message below quotes the same number
+        # the check used. Team overrides come from `standards.toml`; without one
+        # these are the values that were hardcoded here before it existed.
+        min_rib = standard("plate_pocket", "min_rib_mm")
+        min_border = standard("plate_pocket", "min_border_mm")
+        min_floor = standard("plate_pocket", "min_floor_mm")
+        max_removed = standard("plate_pocket", "max_removed_fraction")
+        shop_end_mill = standard("plate_pocket", "end_mill_radius_mm")
 
         cols = int(params["columns"])
         rows = int(params["rows"])
@@ -207,49 +213,52 @@ class PlatePocketPattern:
                 suggestion=f"Use at most {thickness:g} mm, or omit it to cut through."))
         elif depth < thickness:
             floor = thickness - depth
-            if floor < MIN_FLOOR_MM:
+            if floor < min_floor:
                 problems.append(Problem(
                     Severity.WARNING,
                     f"This leaves a {floor:.2f} mm floor under each pocket "
                     f"({thickness:g} - {depth:g} mm), thinner than the "
-                    f"{MIN_FLOOR_MM:g} mm that survives handling.",
+                    f"{min_floor:g} mm that survives handling."
+                    + team_note("plate_pocket", "min_floor_mm"),
                     parameter="pocket_depth",
                     suggestion="Cut through instead, or leave at least "
-                               f"{MIN_FLOOR_MM:g} mm."))
+                               f"{min_floor:g} mm."))
 
         # 4. Shop rules of thumb — guidance, so warnings.
-        if rib < MIN_RIB_MM:
+        if rib < min_rib:
             problems.append(Problem(
                 Severity.WARNING,
-                f"rib_width {rib:g} mm is under {MIN_RIB_MM:g} mm. Ribs that thin "
+                f"rib_width {rib:g} mm is under {min_rib:g} mm. Ribs that thin "
                 f"buckle under load rather than carry it, and are easy to tear "
-                f"while routing.",
+                f"while routing." + team_note("plate_pocket", "min_rib_mm"),
                 parameter="rib_width"))
-        if border < MIN_BORDER_MM:
+        if border < min_border:
             problems.append(Problem(
                 Severity.WARNING,
-                f"border_width {border:g} mm is under {MIN_BORDER_MM:g} mm, which "
-                f"leaves little flange for bolts or gussets at the plate edge.",
+                f"border_width {border:g} mm is under {min_border:g} mm, which "
+                f"leaves little flange for bolts or gussets at the plate edge."
+                + team_note("plate_pocket", "min_border_mm"),
                 parameter="border_width"))
-        if radius < DEFAULT_CORNER_RADIUS_MM:
+        if radius < shop_end_mill:
             problems.append(Problem(
                 Severity.WARNING,
                 f"corner_radius {radius:g} mm is smaller than a 1/4\" end mill "
-                f"({DEFAULT_CORNER_RADIUS_MM:g} mm), the usual FRC shop minimum. "
-                f"Check the tooling before committing to this.",
+                f"({shop_end_mill:g} mm), the usual FRC shop minimum. "
+                f"Check the tooling before committing to this."
+                + team_note("plate_pocket", "end_mill_radius_mm"),
                 parameter="corner_radius"))
 
         # 5. Stiffness. Pocketing is a trade, and this is the cost side.
         pocket_area = pocket_w * pocket_l * cols * rows
         removed = pocket_area / (plate_w * plate_l) if plate_w and plate_l else 0.0
-        if removed > MAX_REMOVED_FRACTION:
+        if removed > max_removed:
             problems.append(Problem(
                 Severity.WARNING,
                 f"These pockets remove {removed:.0%} of the plate area "
                 f"({cols * rows} x {pocket_w:.1f} x {pocket_l:.1f} mm of "
                 f"{plate_w:g} x {plate_l:g} mm). Past about "
-                f"{MAX_REMOVED_FRACTION:.0%} the bending stiffness falls off "
-                f"quickly.",
+                f"{max_removed:.0%} the bending stiffness falls off "
+                f"quickly." + team_note("plate_pocket", "max_removed_fraction"),
                 parameter="rows",
                 suggestion="Widen the ribs, or pocket fewer cells."))
 

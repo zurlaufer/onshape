@@ -1,0 +1,89 @@
+# How this team builds things, as numbers the checks enforce.
+#
+# EVERY LINE HERE IS COMMENTED OUT ON PURPOSE. The values shown are the
+# defaults already in force; uncomment one only when your team has actually
+# decided something different. An invented standard is worse than no standard,
+# because it will be enforced and it will be wrong.
+#
+# These are checked by `frc_check_design` at ZERO API cost, before any geometry
+# exists. A violation comes back as a refusal or a warning **with the number in
+# it** — which is the whole point. This project measured what a standards
+# *document* is worth: the `box` reserved-word trap was written down in
+# STATUS.md, a later session read STATUS.md twice, and hit it anyway. A number
+# that stops you is worth more than a paragraph that describes itself.
+#
+# When a value here is in force, the message says so, so a student who
+# disagrees knows to argue with the team rather than with the tool.
+#
+# WHAT DOES NOT BELONG HERE
+#   Physical facts. Aluminium density, the circumradius of 1/2 in hex stock, a
+#   flanged bearing's OD. A team cannot vote on those and they stay in code.
+#   Only decisions belong here: things a team with a waterjet answers
+#   differently from a team with a hand router.
+#
+# A typo'd name is REFUSED at load with the list of valid names, rather than
+# silently ignored. A standard that quietly does nothing is the worst outcome
+# available, so it is made impossible.
+#
+# Committed on purpose, like robot.toml: one person writes the team's rules
+# down and everybody's copilot enforces them.
+
+
+# ------------------------------------------------------------ plate pocketing
+# Lightening pockets in a gusset, swerve plate or bellypan.
+
+[plate_pocket]
+
+# Material left between adjacent pockets. Ribs thinner than this buckle under
+# load rather than carry it, and tear while routing.
+# min_rib_mm = 3.0
+
+# Material left around the outside. Pockets running to the edge remove the
+# flange that bolts and gussets need.
+# min_border_mm = 5.0
+
+# Thinnest pocket floor that survives handling. Below it, cut through instead.
+# min_floor_mm = 1.0
+
+# Past this share of the face area the plate is more hole than plate and its
+# bending stiffness falls off sharply.
+# max_removed_fraction = 0.6
+
+# Radius of the smallest end mill the shop actually owns — 3.175 is a 1/4 in
+# cutter, the FRC default. This sets the smallest internal corner, and so the
+# smallest pocket that can be cut at all. Worth setting to what is really in
+# the drawer: it is the difference between a design that can be made and one
+# that cannot.
+# end_mill_radius_mm = 3.175
+
+
+# ----------------------------------------------------------- tube hole patterns
+# Holes along 1x1 / 2x1 tube stock.
+
+[tube_hole]
+
+# Aluminium between a hole and the tube edge, below which it tears out.
+# min_wall_mm = 2.0
+
+# Hole centre at least this many hole-diameters from the tube end.
+# edge_distance_factor = 1.0
+
+# Share of the tube length taken as holes before it is materially weakened in
+# bending.
+# max_material_removed = 0.5
+
+
+# ------------------------------------------------------------- gearbox plates
+# Bearing bores at the centre distance a gear pair requires.
+
+[gearbox_bore]
+
+# Smallest 20-degree spur pinion the shop will accept. 18 is the theoretical
+# undercut limit; 14 is common FRC practice.
+# min_teeth_no_undercut = 14
+
+# Aluminium between two bores before the web tears out.
+# min_web_mm = 3.0
+
+# Material between a bearing bore and the plate edge.
+# min_edge_mm = 4.0

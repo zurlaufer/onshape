@@ -28,20 +28,23 @@ from typing import Any
 
 from src.physics.motors import MOTORS, Gearbox, get_motor, reduction_from_stages
 
+from ..standards import standard, team_note
 from .base import ParamSpec, Problem, Severity, check_required, merge_defaults
 
 MM_PER_INCH = 25.4
 
-#: Below this, a 20-degree pressure angle spur gear undercuts at the root and
-#: loses tooth strength. 18 is the theoretical limit; 14 is what shops accept.
-#: A guideline, so it warns rather than refuses.
-MIN_TEETH_NO_UNDERCUT = 14
-
-#: Minimum aluminium left between two bores before the web tears out.
-MIN_WEB_MM = 3.0
-
-#: Bearing bores this close to a plate edge are not worth trusting.
-MIN_EDGE_MM = 4.0
+# Shop policy, in `standards.toml` under `[gearbox_bore]`, read through
+# `standard()` at check time:
+#
+#   gearbox_bore.min_teeth_no_undercut  smallest pinion the shop accepts. Below
+#                                       it a 20-degree spur undercuts at the
+#                                       root; 18 is the theoretical limit, 14 is
+#                                       common practice. A guideline, so it
+#                                       warns rather than refuses.
+#   gearbox_bore.min_web_mm             aluminium between two bores before the
+#                                       web tears out
+#   gearbox_bore.min_edge_mm            material between a bore and the plate
+#                                       edge
 
 
 class GearboxBorePattern:
@@ -106,6 +109,10 @@ class GearboxBorePattern:
         if any(p.is_error for p in problems):
             return problems
 
+        min_web = standard("gearbox_bore", "min_web_mm")
+        min_edge = standard("gearbox_bore", "min_edge_mm")
+        min_teeth = standard("gearbox_bore", "min_teeth_no_undercut")
+
         driving = float(params["driving_teeth"])
         driven = float(params["driven_teeth"])
         bore = float(params["bore_diameter"])
@@ -123,29 +130,31 @@ class GearboxBorePattern:
         ratio = self.reduction(params)
 
         # 1. The two bores must not run into each other.
-        needed = bore + MIN_WEB_MM
+        needed = bore + min_web
         if centre < needed:
             problems.append(Problem(
                 Severity.ERROR,
                 f"The {driving:g}:{driven:g} pair at {params['diametral_pitch']:g} DP "
                 f"puts the bores {centre:.1f} mm apart, but two {bore:g} mm bores "
-                f"need {needed:.1f} mm ({bore:g} + {MIN_WEB_MM:g} mm web).",
+                f"need {needed:.1f} mm ({bore:g} + {min_web:g} mm web)."
+                + team_note("gearbox_bore", "min_web_mm"),
                 parameter="bore_diameter",
-                suggestion=f"Use a bore under {centre - MIN_WEB_MM:.1f} mm, a higher "
+                suggestion=f"Use a bore under {centre - min_web:.1f} mm, a higher "
                            f"tooth count, or a coarser pitch."))
 
         # 2. Both bores plus edge margin must fit on the plate.
-        span = centre + bore + 2 * MIN_EDGE_MM
+        span = centre + bore + 2 * min_edge
         if span > width:
             problems.append(Problem(
                 Severity.ERROR,
                 f"Bores plus edge margin span {span:.1f} mm "
-                f"({centre:.1f} centre + {bore:g} bore + 2 x {MIN_EDGE_MM:g} edge) "
-                f"but plate_width is {width:g} mm.",
+                f"({centre:.1f} centre + {bore:g} bore + 2 x {min_edge:g} edge) "
+                f"but plate_width is {width:g} mm."
+                + team_note("gearbox_bore", "min_edge_mm"),
                 parameter="plate_width",
                 suggestion=f"Widen the plate to at least {span:.0f} mm."))
 
-        across = bore + 2 * MIN_EDGE_MM
+        across = bore + 2 * min_edge
         if across > height:
             problems.append(Problem(
                 Severity.ERROR,
@@ -154,18 +163,18 @@ class GearboxBorePattern:
                 parameter="plate_height"))
 
         # 3. Undercut — a guideline, hence a warning.
-        if driving < MIN_TEETH_NO_UNDERCUT:
+        if driving < min_teeth:
             problems.append(Problem(
                 Severity.WARNING,
                 f"A {driving:g}-tooth pinion undercuts at a 20 degree pressure "
-                f"angle; below about {MIN_TEETH_NO_UNDERCUT} teeth the root is "
-                f"weakened.",
+                f"angle; below about {min_teeth:g} teeth the root is weakened."
+                + team_note("gearbox_bore", "min_teeth_no_undercut"),
                 parameter="driving_teeth",
-                suggestion=f"Use {MIN_TEETH_NO_UNDERCUT} teeth or more, or confirm "
+                suggestion=f"Use {min_teeth:g} teeth or more, or confirm "
                            f"the COTS gear is profile-shifted."))
 
         # 4. Does the driven gear overhang the plate?
-        if pd_driven + 2 * MIN_EDGE_MM > height:
+        if pd_driven + 2 * min_edge > height:
             problems.append(Problem(
                 Severity.WARNING,
                 f"The driven gear's pitch diameter is {pd_driven:.1f} mm, which "

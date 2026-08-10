@@ -12,6 +12,7 @@ refused write, an impossible layout, and a response that outgrew its ceiling.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +21,8 @@ from src.api.quota import QuotaLedger
 from src.context.queries import MAX_RESPONSE_BYTES
 from src.context.workspace import Target, Workspace
 from src.mcp import server
+from src.skills import standards as standards_module
+from src.skills.standards import Standards
 from src.skills.templates import TEMPLATES
 
 CITRUS = "8d51b49e4b833c57f7d33bf0"  # a real robot; never a write target
@@ -69,6 +72,24 @@ class TestListChecks:
         """Advice the model cannot act on is worse than none."""
         payload = json.loads(await server.frc_list_checks())
         assert "frc_check_design" in payload.get("note", "")
+
+    async def test_team_standards_are_silent_until_a_team_sets_one(self):
+        """No standards.toml entries, no payload. A team that has decided
+        nothing should not pay tokens to be told so on every call."""
+        payload = json.loads(await server.frc_list_checks())
+        assert "team_standards" not in payload
+
+    async def test_team_standards_are_reported_when_set(self, monkeypatch):
+        """The case that matters: a session designing to the generic 3 mm rib
+        should find out the team decided 6 before it proposes anything."""
+        monkeypatch.setattr(
+            standards_module, "STANDARDS",
+            Standards({"plate_pocket.min_rib_mm": 6.0}, source=Path("standards.toml")))
+
+        payload = json.loads(await server.frc_list_checks())
+        reported = payload["team_standards"]
+        assert [s["standard"] for s in reported] == ["plate_pocket.min_rib_mm"]
+        assert reported[0]["value"] == 6.0
 
 
 class TestCheckDesign:

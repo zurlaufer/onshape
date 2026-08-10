@@ -62,6 +62,7 @@ from src.skills.apply import (
     persist_feature,
     probe_body,
 )
+from src.skills import standards
 from src.skills.templates import TEMPLATES
 from src.skills.validate import validate_params, validate_source
 
@@ -444,17 +445,29 @@ async def frc_list_checks() -> str:
     does not know — minimum tooth counts, end mill radii, wall thicknesses,
     material density — plus the geometry they imply.
     """
-    payload = {
+    payload: dict[str, object] = {
         "checks": [_template_detail(t) for t in TEMPLATES.values()],
         "note": ("All of these run locally and cost nothing. Use them before "
                  "spending a FeatureScript probe."),
     }
+
+    # Only the numbers this team actually changed. A team with no standards.toml
+    # sees nothing here and pays nothing for it; the defaults already show up in
+    # each check's own message. What matters is that a session designing to
+    # "3 mm ribs" when the team decided 6 finds that out before proposing it.
+    # Read through the module, not `from ... import STANDARDS`: that would bind
+    # the object at import and quietly ignore any later reload.
+    team_set = [s for s in standards.STANDARDS.summary() if s["team_set"]]
+    if team_set:
+        payload["team_standards"] = team_set
+
     return fit_response(
         [
             lambda: payload,
             lambda: {"checks": [{"name": t.name, "summary": t.summary}
                                 for t in TEMPLATES.values()],
-                     "note": payload["note"]},
+                     "note": payload["note"],
+                     **({"team_standards": team_set} if team_set else {})},
             lambda: {"checks": sorted(TEMPLATES)},
         ],
         narrow_hint="Call frc_check_design with one name for its full schema.",
