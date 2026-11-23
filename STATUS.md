@@ -1,8 +1,8 @@
 # Project Status
 
-**Last verified: 2026-08-10** — Tool surface reshaped around `where`; writes persist; the
+**Last verified: 2026-11-23** — Climber stack replaced (11T-on-hex was unbuildable); current-limited torque now uses the smaller Kt. Before that, 2026-08-10: Tool surface reshaped around `where`; writes persist; the
 probe is cached against a ~100/day bucket. The worked-example corpus exists at last, and
-shop rules moved out of the templates into `standards.toml`. 377 tests, ~20 s.
+shop rules moved out of the templates into `standards.toml`. 389 tests.
 
 > **Planning context, and it outranks everything below.** The team still CADs in
 > **SolidWorks** and expects to through the 2027 season; Onshape is a 2028 decision this
@@ -109,7 +109,7 @@ worth repeating — see `FINDINGS.md`.
 | `tests/test_persist.py` | 11 tests: no restore, repointing, rollback asymmetry. |
 | `tests/test_probe_cache.py` | 19 tests: hashing, cache hits, learned symbols, the corpus. |
 | `tests/test_corpus.py` | 8 tests. Pins that the directory exists, that no example has drifted from its renderer, and that every verified one is a sendable bare lambda. |
-| `tests/test_standards.py` | 17 tests: overrides, refusal of typo'd names, zero-disables-a-check, and that no file means no behaviour change. **377 total**. |
+| `tests/test_standards.py` | 17 tests: overrides, refusal of typo'd names, zero-disables-a-check, and that no file means no behaviour change. **389 total** (12 added 2026-11-23: hex pinion, NEO torque constant). |
 | `scripts/build_corpus.py` | Regenerates `featurescript/`. Offline, free, idempotent. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
@@ -622,6 +622,12 @@ Final: `11:46 × 11:54 × 11:62` = 115.7:1, two Kraken X60 FOC at 80 A, 0.40 s, 
 committing — Onshape's kernel measured 31,128.5100 mm³ against 31,128.4796 mm³ predicted,
 **0.0001%**. The probe also caught `box` as a reserved word, a rule already in this file, first try.
 
+> **Superseded 2026-11-23.** That stack is unbuildable: its stage 2 and 3 pinions are 11T on
+> 1/2 in hex, and no such gear exists. It is now `11:56 × 14:62 × 14:70` = 112.7:1, which
+> folds in 0.40 s at a 1.43× margin. The plate is 91.84 × 89.54 × 6.35 mm. The kernel measured
+> 35,927.9662 mm³ against 35,927.9445 mm³ predicted, **0.0001%**. The `gearbox` Part Studio in
+> Onshape still holds the old plate. See item 10 under "What to do next".
+
 All of it then moved out of scratch and into the repo: `src/physics/climber.py`,
 `src/physics/geartrain.py`, `src/skills/climber_plate.py`, four scripts and 51 tests. The two
 superseded models were **not** carried over — the mass-at-the-pivot climber and the
@@ -766,12 +772,17 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
    2026-08-11; it covers the write-probe-fix loop items 7 and 8 would improve, so
    **run this before doing 7 or 8** — they may be moot. Protocol, reference numbers and
    decision rule: `docs/eval-onshape-fs-mcp.md`. ~2 hours, ~2 scarce-bucket calls.
-10. **Fix two physics defects found against ReCalc (2026-11-23), before any demo.**
-    (a) `climber_plate.STACK` has 11T pinions on intermediate 1/2" hex shafts. The gear
-    root (0.425") is smaller than the hex across corners (0.577"), so it is unbuildable.
-    Add a pinion-bore-fits constraint to `geartrain.py`, then re-run `size_climber.py`.
-    (b) The NEO's Kt from REV's page is about 25 % above what its Kv implies; pick a
-    source and say why. Details in `FINDINGS.md` 2026-11-23.
+10. **Two physics defects found against ReCalc (2026-11-23). Fixed offline and
+    kernel-verified; one Onshape step is left.**
+    (a) **Done.** `geartrain.py` now rejects any pinion after stage 1 that is below
+    `min_hex_pinion_teeth(dp)` (14T at 20 DP: catalogue, with a geometric fallback).
+    `STACK` is now `11:56 × 14:62 × 14:70`; `verify_plate_geometry.py` PASS at 0.0001 %.
+    (b) **Done.** `torque_at_current` uses the smaller of the stall-end and back-EMF
+    torque constants. REV's published NEO figures are kept and pinned. The NEO is now
+    27 % less optimistic under a current limit; the Krakens move by ≤ 2.5 %.
+    **Left:** re-run `build_climber_plate.py` so the `gearbox` Part Studio holds the new
+    plate (a scratch write). Confirm that an 11T pinion is sold in the Kraken X60's bore.
+    Still not done from ReCalc: supply-current limit and battery sag in `simulate_fold`.
 
 **Not worth doing:** an assembly builder (mates do not survive a SolidWorks import,
 `graph.py` deliberately discards the occurrence data it would need, and a wrong mate fails

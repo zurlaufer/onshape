@@ -121,6 +121,34 @@ class TestModelAgreesWithVendors:
         usable_current = m.stall_current_a - m.free_current_a
         assert m.kt_nm_per_amp * usable_current == pytest.approx(m.stall_torque_nm)
 
+    @pytest.mark.parametrize("key", ["kraken_x60", "kraken_x60_foc"])
+    def test_kraken_sheets_agree_with_themselves(self, key):
+        """Stall-end and free-speed-end torque constants, within 3 %."""
+        m = MOTORS[key]
+        gap = abs(m.kt_nm_per_amp - m.back_emf_kt_nm_per_amp) / m.back_emf_kt_nm_per_amp
+        assert gap < 0.03
+
+    def test_the_neo_sheet_does_not(self):
+        """PINNED FACT, measured 2026-11-23. REV's 2.6 N.m / 105 A gives 0.0252
+        N.m/A. Its own 473 rpm/V gives 0.0198, and ReCalc's dyno constants give
+        0.0196. If this starts failing, REV changed its page; re-read it."""
+        m = get_motor("neo")
+        assert m.kt_nm_per_amp == pytest.approx(0.0252, abs=0.0001)
+        assert m.back_emf_kt_nm_per_amp == pytest.approx(0.0198, abs=0.0001)
+
+    def test_current_limited_torque_uses_the_smaller_constant(self):
+        """Sizing must not inherit the NEO's optimism: about 27 % at 80 A."""
+        m = get_motor("neo")
+        assert m.torque_at_current(80.0) == pytest.approx(
+            (80.0 - m.free_current_a) * m.back_emf_kt_nm_per_amp)
+        optimistic = (80.0 - m.free_current_a) * m.kt_nm_per_amp
+        assert optimistic / m.torque_at_current(80.0) == pytest.approx(1.27, abs=0.01)
+
+    def test_where_the_sheet_agrees_torque_and_current_still_invert(self):
+        m = get_motor("kraken_x60_foc")
+        torque = m.torque_at_current(80.0)
+        assert m.current_at_torque(torque) == pytest.approx(80.0)
+
 
 # --------------------------------------------------------------------------
 # Gear trains

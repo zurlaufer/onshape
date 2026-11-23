@@ -24,6 +24,16 @@ A checker that tests gears against BEARINGS instead passes all of these, which
 is how the constraint gets missed. Bearings sit in the plate; shafts run
 between the plates, and that is where the collision is.
 
+THE SECOND CONSTRAINT, AND HOW IT WAS MISSED. Every pinion after the first
+rides on an intermediate 1/2 in hex shaft, so it needs a hex bore. An 11T 20 DP
+gear's root circle is (11 - 2.5) / 20 = 0.425 in across, which is smaller than
+the hex is across its *flats* (0.5 in). There is no metal left to put a bore
+in. This module shipped an 11:46 x 11:54 x 11:62 climber stack for three
+months, and two of its three pinions could not be bought. The problem was found
+on 2026-11-23 by reading ReCalc's vendor data, not by anything here. Stage 1 is
+exempt: its pinion sits on the motor's own shaft (8 mm, Falcon spline,
+SplineXS), and small pinions are sold for that.
+
 UNITS: millimetres and teeth. Diametral pitch is in teeth per inch because that
 is how FRC gears are sold; the inch conversion is done here, once.
 """
@@ -38,6 +48,8 @@ __all__ = [
     "MM_PER_INCH",
     "COTS_TEETH",
     "HEX_SHAFT_RADIUS_MM",
+    "HEX_ACROSS_FLATS_MM",
+    "MIN_HEX_PINION_TEETH",
     "SPACER_RADIUS_MM",
     "BEARING_OD_MM",
     "EDGE_MARGIN_MM",
@@ -46,6 +58,8 @@ __all__ = [
     "PlateLayout",
     "pitch_radius_mm",
     "outer_radius_mm",
+    "root_radius_mm",
+    "min_hex_pinion_teeth",
     "centre_distance_mm",
     "search_stacks",
     "fold_layout",
@@ -55,6 +69,7 @@ MM_PER_INCH = 25.4
 
 #: Tooth counts actually sold as FRC 20 DP COTS gears. Not every integer is
 #: buyable, and a stack of unbuyable gears is a drawing, not a design.
+#: 11-13T exist only with motor bores; see `MIN_HEX_PINION_TEETH`.
 COTS_TEETH = (
     11, 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38,
     40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 64, 66, 68, 70, 72,
@@ -62,6 +77,19 @@ COTS_TEETH = (
 
 #: Circumradius of 1/2 in hex stock: half the across-flats, over cos(30).
 HEX_SHAFT_RADIUS_MM = (0.5 * MM_PER_INCH / 2.0) / math.cos(math.radians(30.0))
+
+#: 1/2 in hex measured across flats: the smallest circle a hex bore needs.
+HEX_ACROSS_FLATS_MM = 0.5 * MM_PER_INCH
+
+#: Smallest spur gear sold with a 1/2 in hex bore, by diametral pitch. This is a
+#: catalogue fact, not a team standard. For 20 DP the smallest hex-bore gear is
+#: 14T (WCP, REV), and 11-13T are sold only with motor bores. That was
+#: cross-checked on 2026-11-23 against ReCalc's scraped vendor data
+#: (github.com/tervay/recalc, app/genData/*/gears.json). Geometry alone allows
+#: 13T. Its root circle, 0.525 in, clears the 0.5 in flats by 0.3 mm per side,
+#: which leaves no hub. The catalogue is the binding limit. For a pitch not
+#: listed here, only the geometric bound in `min_hex_pinion_teeth` applies.
+MIN_HEX_PINION_TEETH: dict[float, int] = {20.0: 14}
 
 #: A hex spacer is fatter than the shaft it rides on, and it is what a gear
 #: actually hits. Use this, not the bare shaft, unless you have measured.
@@ -110,6 +138,26 @@ def outer_radius_mm(teeth: int, dp: float = 20.0) -> float:
     return (teeth + 2.0) / dp / 2.0 * MM_PER_INCH
 
 
+def root_radius_mm(teeth: int, dp: float = 20.0) -> float:
+    """Root radius: 1.25 modules of dedendum inside the pitch radius.
+
+    That is the standard full-depth 20-degree tooth. Any bore has to fit
+    inside this circle, with metal to spare.
+    """
+    return (teeth - 2.5) / dp / 2.0 * MM_PER_INCH
+
+
+def min_hex_pinion_teeth(dp: float = 20.0) -> int:
+    """Fewest teeth a gear can have and still be bought in a 1/2 in hex bore.
+
+    Uses the catalogue figure where one is known. Otherwise it falls back to the
+    geometric bound, where the root circle just clears the hex flats. That bound
+    is necessary, not sufficient, so treat it as optimistic.
+    """
+    geometric = math.floor(2.5 + HEX_ACROSS_FLATS_MM / MM_PER_INCH * dp) + 1
+    return max(geometric, MIN_HEX_PINION_TEETH.get(float(dp), 0))
+
+
 def centre_distance_mm(driving: int, driven: int, dp: float = 20.0) -> float:
     """Distance between the two shafts. Fixed by the mesh, never a free choice."""
     return (driving + driven) / (2.0 * dp) * MM_PER_INCH
@@ -140,14 +188,33 @@ class GearStack:
         clearance_mm: float = 1.0,
         bearing_od_mm: float = BEARING_OD_MM,
         wall_mm: float = 3.0,
+        min_hex_pinion: int | None = None,
     ) -> list[str]:
         """Every reason this stack cannot be built, in plain sentences.
 
-        Two families of problem. The chain one is the subtle one described in
+        Three families of problem. The chain one is the subtle one described in
         the module docstring. The bore one is blunter: two bearings whose
         centres are closer than an OD plus a wall leave no plate between them.
+        The pinion one is the one that slipped through. A pinion on an
+        intermediate hex shaft has to be a gear someone sells in a hex bore.
+
+        `min_hex_pinion` defaults to `min_hex_pinion_teeth(dp)`. Pass 0 to test
+        the other constraints in isolation.
         """
         problems: list[str] = []
+
+        smallest = (min_hex_pinion_teeth(self.dp) if min_hex_pinion is None
+                    else min_hex_pinion)
+        for index, stage in enumerate(self.stages[1:], start=2):
+            if stage.driving < smallest:
+                root = 2.0 * root_radius_mm(stage.driving, self.dp)
+                problems.append(
+                    f"stage {index}'s {stage.driving}T pinion rides on 1/2 in "
+                    f"hex shaft {index - 1}: its root circle is {root:.2f} mm "
+                    f"across against {HEX_ACROSS_FLATS_MM:.2f} mm hex flats, "
+                    f"and the smallest {self.dp:g} DP gear sold in a hex bore "
+                    f"is {smallest}T"
+                )
 
         for index in range(len(self.stages) - 1):
             gear = self.stages[index].driven
@@ -180,6 +247,7 @@ class GearStack:
         clearance_mm: float = 1.0,
         bearing_od_mm: float = BEARING_OD_MM,
         wall_mm: float = 3.0,
+        min_hex_pinion: int | None = None,
     ) -> bool:
         """The same test as `clearance_problems`, without describing the failure.
 
@@ -187,6 +255,10 @@ class GearStack:
         calls it across a million candidates, nearly all of which fail, and
         formatting a sentence to explain each one is most of the run time.
         """
+        smallest = (min_hex_pinion_teeth(self.dp) if min_hex_pinion is None
+                    else min_hex_pinion)
+        if any(stage.driving < smallest for stage in self.stages[1:]):
+            return False
         for index in range(len(self.stages) - 1):
             needed = (outer_radius_mm(self.stages[index].driven, self.dp)
                       + shaft_radius_mm + clearance_mm)

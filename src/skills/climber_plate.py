@@ -8,12 +8,14 @@ same magic numbers drifting apart.
 
 Change `GEOMETRY` or `STACK` here and every script follows.
 
-WHY THESE TOOTH COUNTS. Not because 115.7:1 was the target — several stacks hit
+WHY THESE TOOTH COUNTS. Not because 112.7:1 was the target — several stacks hit
 that. Because `GearStack.clearance_problems` rejects the obvious ones. The
-driven gears grow 46 -> 54 -> 62 to keep each stage's big gear clear of the next
-stage's shaft; see the docstring in `geartrain.py`. The first stack chosen for
-this robot, 11:60 x 11:60 x 12:60, interferes by 4.8 mm and cannot be built at
-any plate size.
+driven gears grow 56 -> 62 -> 70 to keep each stage's big gear clear of the next
+stage's shaft; see the docstring in `geartrain.py`. Two stacks were rejected on
+the way. The first, 11:60 x 11:60 x 12:60, interferes by 4.8 mm and cannot be
+built at any plate size. The second, 11:46 x 11:54 x 11:62, was committed for
+three months before anyone noticed it needs 11T gears in a hex bore, and those
+do not exist.
 
 The plate itself is deliberately plain: a rectangle and four bores. Pockets,
 mounting holes and the motor bolt pattern are not here yet.
@@ -52,8 +54,14 @@ __all__ = [
 #: The mechanism this gearbox drives.
 GEOMETRY = ClimberGeometry(mass_kg=60.0, arm_m=0.40, com_offset_m=0.35)
 
-#: 115.7:1 in three spur stages, all of them buildable.
-STACK = GearStack((Stage(11, 46), Stage(11, 54), Stage(11, 62)))
+#: 112.7:1 in three spur stages. Replaced 11:46 x 11:54 x 11:62 on 2026-11-23:
+#: that stack put 11T pinions on intermediate 1/2 in hex shafts, and no such gear
+#: exists (see `geartrain.MIN_HEX_PINION_TEETH`). This one is the closest
+#: buildable stack to the fold optimum. It folds in 0.40 s at a 1.43x margin,
+#: against 0.40 s and 1.46x before. The plate's longest side grows from 86.7 to
+#: 91.8 mm. Stage 1's 11T sits on the Kraken's own shaft; confirm that the
+#: vendor sells that pinion in the Kraken's bore before cutting.
+STACK = GearStack((Stage(11, 56), Stage(14, 62), Stage(14, 70)))
 
 MOTOR_NAME = "kraken_x60_foc"
 MOTOR_COUNT = 2

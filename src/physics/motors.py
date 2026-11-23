@@ -86,6 +86,28 @@ class Motor:
         """Torque constant: N.m produced per amp above the free current."""
         return self.stall_torque_nm / (self.stall_current_a - self.free_current_a)
 
+    @property
+    def back_emf_kt_nm_per_amp(self) -> float:
+        """The same constant, worked out from the free-speed end of the sheet.
+
+        In SI units a DC machine's torque constant equals its back-EMF constant.
+        At free speed the back-EMF is the supply voltage minus the drop across
+        the winding at free current. The resistance is V / stall current. So:
+
+            Kt = (V - I_free * V / I_stall) / w_free
+
+        That uses only numbers already on the vendor's sheet, so it can be
+        checked by hand. When the two estimates disagree, the sheet disagrees
+        with itself. Measured 2026-11-23: both Krakens agree to within 2.5 %.
+        The NEO does not. REV's 2.6 N.m / 105 A implies 0.0252, but its 473 rpm/V
+        implies 0.0198, and ReCalc's independent dyno-sourced constants give
+        0.0196. REV's 105 A is probably supply current measured through a
+        controller, not winding current, but that has not been measured here.
+        """
+        resistance = self.nominal_voltage_v / self.stall_current_a
+        back_emf = self.nominal_voltage_v - self.free_current_a * resistance
+        return back_emf / self.free_speed_rad_s
+
     def torque_at_rpm(self, rpm: float) -> float:
         """Torque (N.m) available at a given shaft speed, at nominal voltage.
 
@@ -105,15 +127,22 @@ class Motor:
         return self.free_current_a + (torque_nm / self.stall_torque_nm) * span
 
     def torque_at_current(self, amps: float) -> float:
-        """Torque (N.m) a current limit allows — the inverse of the above.
+        """Torque (N.m) a current limit allows.
 
         This is the shape a stator current limit takes in a simulation: the
         controller will not exceed `amps`, so torque is capped even where the
         speed-based curve would allow more. Clamped at zero, because below the
         free current the motor is not producing useful torque at all.
+
+        Uses the SMALLER of the two torque constants (see
+        `back_emf_kt_nm_per_amp`). This is where climbers and holds get sized,
+        and an optimistic torque-per-amp is the error that drops a robot. With
+        the NEO's published sheet, the stall-end constant alone over-states
+        current-limited torque by about 27 %. For motors whose sheet agrees with
+        itself this is the exact inverse of `current_at_torque`.
         """
-        span = self.stall_current_a - self.free_current_a
-        return max(0.0, (amps - self.free_current_a) / span * self.stall_torque_nm)
+        kt = min(self.kt_nm_per_amp, self.back_emf_kt_nm_per_amp)
+        return max(0.0, (amps - self.free_current_a) * kt)
 
     def power_at_rpm(self, rpm: float) -> float:
         """Mechanical output power (W) at a given shaft speed."""

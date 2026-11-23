@@ -9,7 +9,7 @@ function(context is Context, queries)
     });
     skRectangle(outline, "outline", {
         "firstCorner"  : vector(0, 0) * millimeter,
-        "secondCorner" : vector(86.1474, 86.6809) * millimeter
+        "secondCorner" : vector(91.8429, 89.535) * millimeter
     });
     skSolve(outline);
     opExtrude(context, plateId + "extrude", {
@@ -25,10 +25,10 @@ function(context is Context, queries)
     var bores = newSketchOnPlane(context, boreId + "sketch", {
         "sketchPlane" : plane(vector(0, 0, 0) * meter, vector(0, 0, 1))
     });
-    skCircle(bores, "bore0", { "center" : vector(33.0882, 68.5834) * millimeter, "radius" : 14.2875 * millimeter });
-    skCircle(bores, "bore1", { "center" : vector(68.0499, 59.2154) * millimeter, "radius" : 14.2875 * millimeter });
-    skCircle(bores, "bore2", { "center" : vector(64.4525, 18.0975) * millimeter, "radius" : 14.2875 * millimeter });
-    skCircle(bores, "bore3", { "center" : vector(18.0975, 18.0975) * millimeter, "radius" : 14.2875 * millimeter });
+    skCircle(bores, "bore0", { "center" : vector(73.7454, 59.9961) * millimeter, "radius" : 14.2875 * millimeter });
+    skCircle(bores, "bore1", { "center" : vector(66.3575, 18.0975) * millimeter, "radius" : 14.2875 * millimeter });
+    skCircle(bores, "bore2", { "center" : vector(18.0975, 18.0975) * millimeter, "radius" : 14.2875 * millimeter });
+    skCircle(bores, "bore3", { "center" : vector(18.0975, 71.4375) * millimeter, "radius" : 14.2875 * millimeter });
     skSolve(bores);
     opExtrude(context, boreId + "cut", {
         "entities"  : qSketchRegion(boreId + "sketch"),

@@ -6,6 +6,10 @@ unbuildable because a gear and the next shaft wanted the same space. The wrong
 check — gears against bearings — passes every one of the bad cases, so the
 tests pin the bad cases explicitly rather than only the good ones.
 
+`TestHexPinion` is the second constraint of that kind. The stack shipped for
+three months (11:46 x 11:54 x 11:62) passed every check here, yet two of its
+pinions could not be bought: no 11T gear has room for a 1/2 in hex bore.
+
 No network, no credentials.
 """
 
@@ -18,6 +22,7 @@ import pytest
 from src.physics.geartrain import (
     BEARING_OD_MM,
     COTS_TEETH,
+    HEX_ACROSS_FLATS_MM,
     HEX_SHAFT_RADIUS_MM,
     MM_PER_INCH,
     SPACER_RADIUS_MM,
@@ -25,13 +30,21 @@ from src.physics.geartrain import (
     Stage,
     centre_distance_mm,
     fold_layout,
+    min_hex_pinion_teeth,
     outer_radius_mm,
     pitch_radius_mm,
+    root_radius_mm,
     search_stacks,
 )
 
-GOOD = GearStack((Stage(11, 46), Stage(11, 54), Stage(11, 62)))
+GOOD = GearStack((Stage(11, 56), Stage(14, 62), Stage(14, 70)))
 BAD = GearStack((Stage(11, 60), Stage(11, 60), Stage(12, 60)))
+#: Shipped 2026-08-09 to 2026-11-23. Clears every shaft, but its stage 2 and 3
+#: pinions do not exist in a hex bore.
+UNBUYABLE = GearStack((Stage(11, 46), Stage(11, 54), Stage(11, 62)))
+
+#: Switch the pinion check off, for tests about the chain constraint alone.
+CHAIN_ONLY = {"min_hex_pinion": 0}
 
 
 class TestGearArithmetic:
@@ -67,14 +80,14 @@ class TestGearArithmetic:
 
 class TestStack:
     def test_ratio_multiplies(self):
-        assert GOOD.ratio == pytest.approx((46 / 11) * (54 / 11) * (62 / 11))
-        assert GOOD.ratio == pytest.approx(115.7, abs=0.1)
+        assert GOOD.ratio == pytest.approx((56 / 11) * (62 / 14) * (70 / 14))
+        assert GOOD.ratio == pytest.approx(112.7, abs=0.1)
 
     def test_str_is_readable(self):
-        assert str(GOOD) == "11:46 x 11:54 x 11:62"
+        assert str(GOOD) == "11:56 x 14:62 x 14:70"
 
     def test_centre_distances(self):
-        assert GOOD.centre_distances == pytest.approx((36.195, 41.275, 46.355),
+        assert GOOD.centre_distances == pytest.approx((42.545, 48.26, 53.34),
                                                       abs=0.01)
 
 
@@ -89,7 +102,8 @@ class TestChainClearance:
         """11:60 x 11:60 x 12:60 — chosen first, then found impossible."""
         problems = BAD.clearance_problems()
         assert problems, "this stack must not pass; it interferes by 4.8 mm"
-        assert "fouls shaft 2" in problems[0]
+        assert any("fouls shaft 2" in p for p in problems)
+        assert "fouls shaft 2" in BAD.clearance_problems(**CHAIN_ONLY)[0]
 
     def test_the_interference_is_about_five_millimetres(self):
         gear = outer_radius_mm(60)
@@ -108,12 +122,12 @@ class TestChainClearance:
         """Shrinking gears fail; growing ones pass. The rule in one assertion."""
         growing = GearStack((Stage(11, 46), Stage(11, 54), Stage(11, 62)))
         shrinking = GearStack((Stage(11, 62), Stage(11, 54), Stage(11, 46)))
-        assert growing.is_buildable()
-        assert not shrinking.is_buildable()
+        assert growing.is_buildable(**CHAIN_ONLY)
+        assert not shrinking.is_buildable(**CHAIN_ONLY)
 
     def test_last_stage_is_unconstrained(self):
         """Nothing follows it, so its driven gear can be as big as you like."""
-        assert GearStack((Stage(11, 46), Stage(11, 72))).is_buildable()
+        assert GearStack((Stage(11, 46), Stage(14, 72))).is_buildable()
 
     def test_a_bare_shaft_is_more_forgiving_than_a_spacer(self):
         """Which radius you measure decides whether this stack exists.
@@ -124,9 +138,9 @@ class TestChainClearance:
         the spacer for exactly this reason.
         """
         stack = GearStack((Stage(11, 46), Stage(11, 52)))
-        assert stack.is_buildable(shaft_radius_mm=HEX_SHAFT_RADIUS_MM)
-        assert not stack.is_buildable(shaft_radius_mm=SPACER_RADIUS_MM)
-        assert not stack.is_buildable()  # the default must be the strict one
+        assert stack.is_buildable(shaft_radius_mm=HEX_SHAFT_RADIUS_MM, **CHAIN_ONLY)
+        assert not stack.is_buildable(shaft_radius_mm=SPACER_RADIUS_MM, **CHAIN_ONLY)
+        assert not stack.is_buildable(**CHAIN_ONLY)  # the default must be strict
 
     def test_bores_that_would_overlap_are_caught(self):
         """A separate failure: two bearings with no plate left between them."""
@@ -141,6 +155,40 @@ class TestChainClearance:
         have = centre_distance_mm(11, 60)
         assert have > gear + BEARING_OD_MM / 2 - 12  # a lenient bearing test
         assert have < gear + SPACER_RADIUS_MM + 1.0  # the real one
+
+
+class TestHexPinion:
+    """A pinion after stage 1 rides on 1/2 in hex. It must exist in a hex bore."""
+
+    def test_the_stack_that_shipped_is_unbuyable(self):
+        problems = UNBUYABLE.clearance_problems()
+        assert len(problems) == 2
+        assert "stage 2's 11T pinion" in problems[0]
+        assert "stage 3's 11T pinion" in problems[1]
+        assert not UNBUYABLE.is_buildable()
+
+    def test_it_clears_every_shaft_which_is_how_it_was_missed(self):
+        assert UNBUYABLE.clearance_problems(**CHAIN_ONLY) == []
+
+    def test_an_11t_root_circle_is_inside_the_hex_flats(self):
+        """(11 - 2.5) / 20 = 0.425 in across, against 0.5 in flats."""
+        assert 2 * root_radius_mm(11) == pytest.approx(0.425 * MM_PER_INCH)
+        assert 2 * root_radius_mm(11) < HEX_ACROSS_FLATS_MM
+
+    def test_stage_one_is_exempt_it_rides_the_motor_shaft(self):
+        assert GearStack((Stage(11, 56), Stage(14, 62))).is_buildable()
+
+    def test_14t_is_the_smallest_20dp_hex_gear(self):
+        assert min_hex_pinion_teeth(20.0) == 14
+        assert not GearStack((Stage(11, 56), Stage(13, 62))).is_buildable()
+
+    def test_unknown_pitch_falls_back_to_geometry(self):
+        """32 DP: root must clear 0.5 in flats, so 2.5 + 16 -> at least 19T."""
+        assert min_hex_pinion_teeth(32.0) == 19
+
+    def test_search_never_returns_a_small_pinion_on_hex(self):
+        for stack in search_stacks(ratio_min=100.0, ratio_max=130.0, stages=3):
+            assert all(s.driving >= 14 for s in stack.stages[1:])
 
 
 class TestSearch:
@@ -174,7 +222,7 @@ class TestFoldLayout:
         layout = fold_layout(GOOD)
         assert layout is not None
         assert len(layout.shafts) == 4
-        assert layout.longest_side_mm < 90.0
+        assert layout.longest_side_mm < 92.0  # 91.8 mm, measured 2026-11-23
 
     def test_shafts_sit_at_their_centre_distances(self):
         layout = fold_layout(GOOD)
