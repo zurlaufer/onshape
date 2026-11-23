@@ -16,6 +16,63 @@ write the interpretation by hand, because the numbers do not contain it.
 
 ---
 
+## 2026-11-23 — market review after a 3-month break
+
+Desk research, not a usage session: Chief Delphi, the Onshape and SolidWorks AI
+offerings, and a source-level read of ReCalc (`tervay/recalc`, main @ 2026-11-23).
+
+**Nobody has built this niche.** No Chief Delphi thread or public repo combines
+Onshape access, FRC mechanism physics, team shop rules and kernel verification.
+The closest work is generative ("Astra": GPT + Inventor, visually checked only)
+or assembly hygiene (FRCShaper). The one engineering critique of Astra asked
+exactly our question: *"how do you know that any of the decisions it makes are
+wise?"*
+
+**Onshape Labs shipped an official FeatureScript MCP (2026-08-11).** It covers
+our write-probe-fix loop. Not yet measured against ours; protocol in
+`docs/eval-onshape-fs-mcp.md`.
+
+**FRCShaper (FRC 7415, closed source, ~400 users by 2026-11-16)** drives the
+Onshape web page through hidden document copies, with no REST API. Its Assembly
+check finds mesh errors ("centres are 0.025\" too close"), bolts without nuts,
+belt/chain fit (0.010" / 0.020"), doubled parts. It has no physics beyond
+tooth-ratio kinematics and no design rules (only an "In Stock" fastener list).
+An **AutoPocket** (Shift+P) is in its shortcut table but unreleased. That will
+overlap our pocket checks. Our standards are a natural rule set for it.
+
+**ReCalc already does most of `motors.py`, better.** It uses WPILib DCMotor
+with stator *and supply* limits, battery sag, an RKDP integrator, about 25
+motors, and vendor-bore-aware ratio search. It does **not** model an over-centre
+climber, static hold at the worst fold angle, N-stage gear-to-next-shaft
+clearance, bore walls, or plate layout. Its arm model is the point-mass model
+`climber.py` rejects. Those parts are ours alone.
+
+**Two defects ReCalc's data exposed in our physics:**
+
+1. **The committed climber stack cannot be built.** `climber_plate.STACK` puts
+   11T 20DP pinions on stages 2 and 3, which are intermediate shafts. The root
+   diameter of an 11T 20DP gear is (11 − 2.5)/20 = 0.425", and 1/2" hex is
+   0.577" across corners, so no hex bore fits inside the gear. ReCalc's
+   scraped vendor data agrees: 20DP 11–13T are sold only with motor bores
+   (8 mm, Falcon spline, SplineXS), and the smallest 1/2" hex 20DP is 14T.
+   `search_stacks` lets any pinion be ≥ 11T on any stage. The shaft-clearance
+   check exists; a pinion-bore-fits check does not.
+2. **The NEO is about 25–29 % optimistic under a current limit.** REV's page
+   (2.6 N·m / 105 A) gives Kt ≈ 0.025 N·m/A. REV's own Kv (473 rpm/V) implies
+   ≈ 0.020, and ReCalc's dyno-sourced constants give 0.0196. "Use the vendor"
+   was the right instinct, but this vendor page is internally inconsistent.
+   This does not affect the current design, which uses the Kraken X60 FOC.
+   Kraken free currents are also low: ours is 2.0 A, the CTRE dyno shows
+   2.8–3.5 A.
+
+**What to take from ReCalc:** add a supply-current limit and battery sag to
+`simulate_fold` (a fixed 12 V is optimistic for a 2-motor, 80 A climb); take
+the vendor SKU and bore data in place of the hand-written `COTS_TEETH`; and
+add the caveat that profile-shifted small gears (WCP 16T on an 18T centre
+distance) break the standard-pitch centre distance.
+
+---
+
 ## 2026-08-11 — compared against `ReshefElisha/jarvis-onshape-mcp`
 
 An independent project in the same space, examined so we can tell what a

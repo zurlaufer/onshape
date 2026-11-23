@@ -762,6 +762,16 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
    status string on failure; running `getFeatureStatus(context, id)` (or re-probing the
    body) through evaluate turns "REGEN_ERROR" into a fixable enum. Scarce-bucket cost only
    on failure. See `FINDINGS.md` 2026-08-11.
+9. **Evaluate Onshape Labs' official FeatureScript MCP against ours.** Launched
+   2026-08-11; it covers the write-probe-fix loop items 7 and 8 would improve, so
+   **run this before doing 7 or 8** — they may be moot. Protocol, reference numbers and
+   decision rule: `docs/eval-onshape-fs-mcp.md`. ~2 hours, ~2 scarce-bucket calls.
+10. **Fix two physics defects found against ReCalc (2026-11-23), before any demo.**
+    (a) `climber_plate.STACK` has 11T pinions on intermediate 1/2" hex shafts. The gear
+    root (0.425") is smaller than the hex across corners (0.577"), so it is unbuildable.
+    Add a pinion-bore-fits constraint to `geartrain.py`, then re-run `size_climber.py`.
+    (b) The NEO's Kt from REV's page is about 25 % above what its Kv implies; pick a
+    source and say why. Details in `FINDINGS.md` 2026-11-23.
 
 **Not worth doing:** an assembly builder (mates do not survive a SolidWorks import,
 `graph.py` deliberately discards the occurrence data it would need, and a wrong mate fails
