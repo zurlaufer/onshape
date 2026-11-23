@@ -721,6 +721,13 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
    none from the scarce bucket. Research says instance structure survives the translation
    while mates and the feature tree do not — which is exactly the half `graph.py` reads,
    so the expected result is a pass. **Confirm it rather than assume it.**
+   **Blocked on input only, as of 2026-08-11:** no Pack & Go zip is on hand. The import
+   path is already researched: SolidWorks **Pack and Go → Save to Zip**, then either
+   drag-and-drop in the UI or `POST /blobelements/d/{did}/w/{wid}` (multipart, needs
+   `OAuth2Write`) + poll `GET /translations/{tid}` until `DONE`. Keep
+   `flattenAssemblies=false` / hierarchy intact — the tree is what `graph.py` reads.
+   The current client sends JSON only; a multipart spike script must be written when
+   the file arrives.
 2. **`Constants.java` ↔ physics cross-check.** Parse the team's WPILib constants and check
    the gear ratio, current limit and encoder conversion against `geartrain.py` and
    `motors.py`. Zero Onshape, zero quota, offline, and it works on the 2027 SolidWorks
@@ -747,6 +754,14 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
    the Top plane, extruded 6.35 mm blind — dimensions already verified against the kernel,
    so pass/fail is unambiguous. Without it no plate template can be probed end to end
    against stored geometry.
+7. **Discover the FS library version at runtime.** Hardcoded `libraryVersion: 3029` in the
+   probe goes stale silently, like our `x-api-version` did. One cheap GET on the public std
+   document's `/versions` (jarvis-onshape-mcp does this) removes the class. See
+   `FINDINGS.md` 2026-08-11.
+8. **Enrich non-OK persists with `getFeatureStatus`.** `persist_feature` reports a bare
+   status string on failure; running `getFeatureStatus(context, id)` (or re-probing the
+   body) through evaluate turns "REGEN_ERROR" into a fixable enum. Scarce-bucket cost only
+   on failure. See `FINDINGS.md` 2026-08-11.
 
 **Not worth doing:** an assembly builder (mates do not survive a SolidWorks import,
 `graph.py` deliberately discards the occurrence data it would need, and a wrong mate fails

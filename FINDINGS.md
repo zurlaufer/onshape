@@ -16,6 +16,93 @@ write the interpretation by hand, because the numbers do not contain it.
 
 ---
 
+## 2026-08-11 — compared against `ReshefElisha/jarvis-onshape-mcp`
+
+An independent project in the same space, examined so we can tell what a
+second team learned without us. It drives Onshape CAD *construction* —
+sketches, extrudes, fillets, mates, ~70 tools, renders, vision, drawing
+OCR, Variable Studios, custom FeatureScript. We drive physics that decides
+numbers and verification against the kernel. The niches do not overlap; the
+findings do.
+
+**Independent convergence on facts we charge money for.** All of these were
+settled facts in `STATUS.md` first, and here they are again, found by
+someone else at another lab:
+
+- The custom-feature namespace is `e{eid}::m{mv}` with prefixes glued to
+  ids (their `_build_namespace`). They also learned the microversion pins a
+  feature to its Feature Studio — their fix is to create a *fresh* FS
+  element per feature and never restore, which is our "do not restore"
+  rule reached from the other side.
+- The `/featurescript` evaluate endpoint is the real diagnostic channel:
+  on a `REGEN_ERROR` they re-run the feature *body* through evaluate and
+  append `notices[]` to the failure — our layer 5, done on the apply path.
+  They also call `getFeatureStatus(context, id)` through it to enrich
+  status with machine-readable enums like `SKETCH_DIMENSION_MISSING_PARAMETER`.
+- FS version drift is a real failure class: they bumped 2242 → 2909 → 2931
+  and noticed stale versions "silently compile to an empty symbol table" —
+  the same class of silent staleness as our `x-api-version` finding.
+- "Solver silence is a platform limitation" — over-constrained sketches
+  return `SKETCH_SOLVE_FAILED` with no per-constraint diagnostics, so they
+  bisect constraints client-side by id. Same shape as our "the write path
+  reports no reason" finding, on a different endpoint.
+
+**The benchmark we should cite.** Their `RESEARCH.md` is a real eval of
+Claude Opus 4.7 on CAD: hand-written spec beats autonomous image→build by
+**2–10×** in score and 4–7× in time. Their v003–v008 tool variants —
+render-compare loops, drawing OCR, crop-and-read — all landed within noise
+or made things worse. Conclusion: *CAD execution is solved conditional on a
+good spec; image understanding is the wall.* This is the strongest external
+evidence yet for our design: the human supplies intent, the copilot
+executes and verifies. It also says the render/vision tooling we decided
+not to build was the right call — someone else built it and measured it.
+
+**What we should borrow (both cheap, both offline-friendlier than theirs):**
+
+1. **Runtime FS library-version discovery.** They query the public std
+   document's `/versions` and take the newest `"<n>.0"` name. We hardcode
+   `libraryVersion: 3029` in the probe. If Onshape ships a newer std our
+   probes would silently use stale symbols. One GET from the cheap
+   `/documents/{did}/versions` bucket.
+2. **`getFeatureStatus(context, id)` enrichment on the apply path.** Our
+   `persist_feature` reports non-OK status as a bare string. Enriching the
+   failure with the status enum (and re-running the body through evaluate
+   for notices) turns "REGEN_ERROR" into a fixable handle. Costs scarce
+   evaluate calls only on failure — their happy path never pays.
+
+**Where they are weaker, in the order that matters for a team robot:**
+
+- **No write boundary.** They expose `delete_document` and no policy; the
+  client has no `robot.toml` allowlist and no `OAuth2Delete`-scope hygiene.
+  Fine for a personal plugin, an incident on a team robot. Our FINDINGS
+  entry from the first real session measured exactly this hazard: a raw
+  DELETE returned 200 when guarded only by courtesy.
+- **No quota governor.** Their `eval_featurescript` would hammer the ~84/day
+  evaluate bucket with no ledger, and their error-enrichment POSTs add to
+  it. They never hit the wall because they don't measure.
+- **No cache.** Assembly definitions are fetched whole on demand; they have
+  never met a 1.2 MB FRC robot. Our microversion-keyed cache exists because
+  we measured one.
+- **Basic auth, no retry classification.** A 429 raises. Their
+  `raise_for_status` path has none of our read-timeout / connect / quota
+  distinctions, all of which were measured facts here first.
+- **Test claim is stale.** `TEST_RESULTS.md` says 73 tests "production-ready"
+  but predates the current surface (30+ test files, coverage gate 80% vs a
+  documented 28%). The suite is a work in progress, which is fine — the
+  claim in the file is the problem.
+
+**What we keep not doing, now with evidence.** We do not build sketches,
+mates, or renders; they do. Our `frc_list_checks` refusal phrasing and
+their regen-hints rotation serve the same purpose through different
+mechanisms, and ours is standards-driven where theirs is enum-driven.
+A general AABB interference check (their `analysis/interference.py`) is
+real work we have deliberately skipped — the shaft-clearance collision our
+`geartrain.py` catches sits between the plates and AABB would miss it, and
+the settled fact in `STATUS.md` already names why bearing-based layout
+checks pass all the failures.
+
+---
+
 ## 2026-08-09 — first real design session (`7e93b1fc`)
 
 **The task.** A climber gearbox, given in a student's words: driven by a Kraken
