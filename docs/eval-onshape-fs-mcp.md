@@ -94,8 +94,15 @@ compile. Record:
 - whether the output is in whole mm or `0.15000000000000002 meter`.
 
 **T4 — gear centre distance.**
-> On a new plate, place two 1.125" bearing bores for a 14T : 60T, 20 DP spur
-> pair.
+> In this Part Studio `<arm URL>`, on a new plate, place two 1.125" bearing
+> bores for a 14T : 60T, 20 DP spur pair.
+
+Each arm works in its own Part Studio tab (`A`, `B`, `C`) of `fs-mcp-eval`, so
+one arm never sees what another built. Add B and C to `robot.toml` as
+writable: our server refuses anything else, and `CLAUDE.md` tells arm C to do
+the same. Step-by-step instructions in Hebrew, and a results sheet, live
+outside the repo in `Desktop\fs-mcp-eval\`. The answer key is kept out of
+arm A's working folder so the model cannot read it.
 
 Pass: the centre distance is **46.990 mm** (1.850"). Record whether it adds
 running clearance; +0.003" is common FRC practice. Bore web = 18.4 mm, which is
