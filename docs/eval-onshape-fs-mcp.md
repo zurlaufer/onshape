@@ -22,8 +22,13 @@ whatever their server uses. Results go in `FINDINGS.md`.
 2. **Subscribe and connect** (from Onshape's Claude Code tech tip, 2026-09-08):
    - App Store → search "FeatureScript MCP Server" → **Subscribe**. Also opt
      into Onshape Labs in Account Preferences.
-   - `claude mcp add --transport http onshape-labs https://fs-mcp.labs.onshape.app/mcp`
-     Use the default local scope; do not add it to the committed `.mcp.json`.
+   - `claude mcp add -s user --transport http onshape-labs https://fs-mcp.labs.onshape.app/mcp`
+     Use **user** scope, not the default local scope, and do not add it to the
+     committed `.mcp.json`. Local scope is keyed by the folder path, and on
+     Windows the CLI writes `C:/…` while the VS Code extension runs as `c:\…`.
+     Measured 2026-11-24: the server was registered and still did not appear in
+     VS Code. User scope also makes it available in arm A's empty folder.
+   - Restart the Claude Code session, because MCP servers load at start.
    - In Claude Code, run `/mcp` → authenticate in the browser.
 3. **Write down the scopes the Authorize screen asks for.** If it asks for
    **Delete**, stop and decide before granting. Our rule is that the copilot
