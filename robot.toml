@@ -55,6 +55,23 @@ url = "https://cad.onshape.com/documents/e424515893d4f1ab8b23e5c4/w/65294e9343b8
 kind = "featurestudio"
 writable = true
 
+# The Onshape Labs FS MCP evaluation (docs/eval-onshape-fs-mcp.md), 2026-11-24.
+# A throwaway document. One tab per arm so no arm sees another's work. Write
+# permission is per DOCUMENT, so tab A is writable too; it is listed nowhere
+# because only arm A, which runs without our server, uses it.
+
+[[target]]
+name = "eval B"
+url = "https://cad.onshape.com/documents/334fc420dfb544c0223f0dcb/w/cce23ac203b886fde81e8f1f/e/3f7c7e11e8aa293bbd0f5a48"
+kind = "partstudio"
+writable = true
+
+[[target]]
+name = "eval C"
+url = "https://cad.onshape.com/documents/334fc420dfb544c0223f0dcb/w/cce23ac203b886fde81e8f1f/e/19882fb2a5cd89b693c1cb76"
+kind = "partstudio"
+writable = true
+
 # The climber gearbox, built 2026-08-09. Its Feature Studio source must never
 # be restored: the inserted feature is pinned to the microversion that defined
 # it, and restoring strands it in ERROR permanently.
