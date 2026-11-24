@@ -625,8 +625,8 @@ committing — Onshape's kernel measured 31,128.5100 mm³ against 31,128.4796 mm
 > **Superseded 2026-11-23.** That stack is unbuildable: its stage 2 and 3 pinions are 11T on
 > 1/2 in hex, and no such gear exists. It is now `11:56 × 14:62 × 14:70` = 112.7:1, which
 > folds in 0.40 s at a 1.43× margin. The plate is 91.84 × 89.54 × 6.35 mm. The kernel measured
-> 35,927.9662 mm³ against 35,927.9445 mm³ predicted, **0.0001%**. The `gearbox` Part Studio in
-> Onshape still holds the old plate. See item 10 under "What to do next".
+> 35,927.9662 mm³ against 35,927.9445 mm³ predicted, **0.0001%**. The `gearbox` Part Studio was
+> rebuilt on 2026-11-24, and the committed solid measured the same volume.
 
 All of it then moved out of scratch and into the repo: `src/physics/climber.py`,
 `src/physics/geartrain.py`, `src/skills/climber_plate.py`, four scripts and 51 tests. The two
@@ -772,17 +772,20 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
    2026-08-11; it covers the write-probe-fix loop items 7 and 8 would improve, so
    **run this before doing 7 or 8** — they may be moot. Protocol, reference numbers and
    decision rule: `docs/eval-onshape-fs-mcp.md`. ~2 hours, ~2 scarce-bucket calls.
-10. **Two physics defects found against ReCalc (2026-11-23). Fixed offline and
-    kernel-verified; one Onshape step is left.**
+10. **Two physics defects found against ReCalc (2026-11-23). Fixed, kernel-verified,
+    and committed to the `gearbox` Part Studio (2026-11-24).**
     (a) **Done.** `geartrain.py` now rejects any pinion after stage 1 that is below
     `min_hex_pinion_teeth(dp)` (14T at 20 DP: catalogue, with a geometric fallback).
     `STACK` is now `11:56 × 14:62 × 14:70`; `verify_plate_geometry.py` PASS at 0.0001 %.
     (b) **Done.** `torque_at_current` uses the smaller of the stall-end and back-EMF
     torque constants. REV's published NEO figures are kept and pinned. The NEO is now
     27 % less optimistic under a current limit; the Krakens move by ≤ 2.5 %.
-    **Left:** re-run `build_climber_plate.py` so the `gearbox` Part Studio holds the new
-    plate (a scratch write). Confirm that an 11T pinion is sold in the Kraken X60's bore.
-    Still not done from ReCalc: supply-current limit and battery sag in `simulate_fold`.
+    The rebuild exposed a bug in `build_climber_plate.py`. It judged every feature in the
+    shared studio, so the Tube Converter spike's `Extrude 1` at INFO failed a perfect plate.
+    It also measured `parts[0]` blind. It now judges only its own feature and measures
+    the part closest to the prediction.
+    **Left:** confirm that an 11T pinion is sold in the Kraken X60's bore. Still not done
+    from ReCalc: supply-current limit and battery sag in `simulate_fold`.
 
 **Not worth doing:** an assembly builder (mates do not survive a SolidWorks import,
 `graph.py` deliberately discards the occurrence data it would need, and a wrong mate fails

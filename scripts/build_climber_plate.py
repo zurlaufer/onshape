@@ -129,23 +129,37 @@ async def main() -> int:
         )
         features = (await client.get(f"{part_studio}/features")).json()
         states = features.get("featureStates", {})
+        # Judge only OUR feature. The Gearbox studio is shared scratch space:
+        # on 2026-11-24 a Tube Converter spike's `Extrude 1` sat there at INFO
+        # (its body consumed by the converter) and failed this script although
+        # the plate was perfect. Other features are listed, not judged.
         print("\nGearbox Part Studio:")
         failed = []
         for feature in features.get("features", []):
             status = states.get(feature.get("featureId"), {}).get("featureStatus")
-            print(f"  {feature.get('name')} ({feature.get('featureType')}): {status}")
-            if status != "OK":
+            ours = feature.get("name") == FEATURE_NAME
+            print(f"  {feature.get('name')} ({feature.get('featureType')}): {status}"
+                  f"{'' if ours else '  (not ours)'}")
+            if ours and status != "OK":
                 failed.append(feature.get("name"))
 
         parts = (await client.get(
             f"/parts/d/{DOCUMENT_ID}/w/{WORKSPACE_ID}/e/{PART_STUDIO_ID}")).json()
         print(f"\nparts: {[p.get('name') for p in parts] or 'none'}")
         if parts:
-            properties = (await client.get(
-                f"/parts/d/{DOCUMENT_ID}/w/{WORKSPACE_ID}/e/{PART_STUDIO_ID}"
-                f"/partid/{parts[0]['partId']}/massproperties")).json()
-            body = next(iter(properties.get("bodies", {}).values()))
-            volume_mm3 = body.get("volume", [0.0])[0] * 1e9
+            # The studio can hold other parts, so `parts[0]` is not necessarily
+            # the plate. Measure each and keep the closest: a stranger matching
+            # the prediction to 0.001 % by coincidence is not a real risk.
+            volumes = []
+            for part in parts:
+                properties = (await client.get(
+                    f"/parts/d/{DOCUMENT_ID}/w/{WORKSPACE_ID}/e/{PART_STUDIO_ID}"
+                    f"/partid/{part['partId']}/massproperties")).json()
+                body = next(iter(properties.get("bodies", {}).values()))
+                volumes.append((body.get("volume", [0.0])[0] * 1e9, part.get("name")))
+            volume_mm3, name = min(
+                volumes, key=lambda v: abs(v[0] - plate.volume_mm3))
+            print(f"measured part          : {name}")
             drift_pct = (abs(volume_mm3 - plate.volume_mm3)
                          / plate.volume_mm3 * 100.0)
             print(f"volume in the document : {volume_mm3:,.4f} mm3")
