@@ -75,8 +75,8 @@ constants), `climber.py` (over-centre lever), `geartrain.py` (shaft clearance).
   feature is pinned to the microversion that defined it. When persisting, do not
   restore, and repoint the inserted feature's namespace after every rewrite.
 - **A required `Query` parameter left empty regenerates as ERROR**, even if
-  the body does nothing. `frc_apply_featurescript` cannot set a selection yet,
-  so it rolls such a feature back. Ship a feature that needs no pick, or say so.
+  the body does nothing. Pass `selections={"face": "top"}` (or `bottom`,
+  `largest_planar`, a face id) to `frc_apply_featurescript`, or it rolls back.
 - **Report lengths in whole millimetres.** `toString()` on a length renders
   `0.15000000000000002 meter`, which reads as a broken tool.
 

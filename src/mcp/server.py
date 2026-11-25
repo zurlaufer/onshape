@@ -82,6 +82,12 @@ from src.skills.apply import (
     studio_name_for,
 )
 from src.skills import standards
+from src.skills.selections import (
+    SelectionError,
+    declared_query_parameters,
+    query_parameter,
+    resolve_face,
+)
 from src.skills.templates import TEMPLATES
 from src.skills.validate import validate_params, validate_source
 
@@ -370,6 +376,7 @@ async def frc_apply_featurescript(
     module: str,
     feature_name: str,
     preview: bool = False,
+    selections: dict[str, str] | None = None,
 ) -> str:
     """Add a custom feature to a Part Studio, and leave it there.
 
@@ -395,6 +402,11 @@ async def frc_apply_featurescript(
             "Climber Gearbox Plate".
         preview: Check that it compiles and then put everything back, changing
             nothing. Use for a dry run; the default is to keep the result.
+        selections: Faces for the module's `Query` parameters, keyed by
+            parameter id, e.g. {"face": "top"}. A feature whose required
+            selection is empty regenerates as ERROR and is rolled back, so
+            set every one. Values: "top", "bottom", "largest_planar" (planar
+            faces of solid bodies), or a face id. The chosen face is reported.
     """
     try:
         target = _resolve(where, expect="partstudio")
@@ -413,8 +425,31 @@ async def frc_apply_featurescript(
             "ok": False, "stage": "source", "api_requests_used": 0,
             "problems": [p.to_dict() for p in local]}, indent=2)
 
+    # Free check first: a selection for a parameter the module does not
+    # declare would be silently ignored by Onshape.
+    selections = selections or {}
+    declared = declared_query_parameters(module)
+    unknown = sorted(set(selections) - declared)
+    if unknown:
+        return json.dumps({
+            "ok": False, "stage": "selections", "api_requests_used": 0,
+            "error": (f"{unknown} not declared as `definition.<id> is Query` in "
+                      f"the module. Declared: {sorted(declared) or 'none'}.")},
+            indent=2)
+
     spent = client.quota.requests_used
+    chosen: dict[str, str] = {}
+    parameters: list[dict] = []
     try:
+        if selections and not preview:
+            details = (await client.get(
+                f"/partstudios/d/{target.document_id}/w/{target.wvm_id}"
+                f"/e/{target.element_id}/bodydetails")).json()
+            for parameter_id, selector in selections.items():
+                face = resolve_face(details, selector)
+                parameters.append(query_parameter(parameter_id, [face.face_id]))
+                chosen[parameter_id] = face.describe()
+
         # One studio per feature, and a separate one for dry runs, which are
         # restored afterwards. See COPILOT_STUDIO_NAME for the failure.
         studio_id = await ensure_feature_studio(
@@ -441,8 +476,16 @@ async def frc_apply_featurescript(
                 feature_studio_id=studio_id,
                 part_studio_id=target.element_id or "",
                 feature_name=feature_name,
+                parameters=parameters,
             )
             out = {"stage": "applied", **result.to_dict()}
+            if chosen:
+                out["selected"] = chosen
+            missing = sorted(declared - set(selections))
+            if missing and not result.ok:
+                out["hint"] = (f"{missing} declared but not selected. An empty "
+                               f"required selection regenerates as ERROR; pass "
+                               f"selections={{...}}.")
             if result.ok:
                 out["note"] = (
                     f"{feature_name!r} is now in {target.describe()}. Run this "
@@ -450,6 +493,10 @@ async def frc_apply_featurescript(
     except WriteRefused as exc:
         return json.dumps({"ok": False, "stage": "write_safety",
                            "error": str(exc)}, indent=2)
+    except SelectionError as exc:
+        return json.dumps({"ok": False, "stage": "selections", "error": str(exc),
+                           "api_requests_used": client.quota.requests_used - spent},
+                          indent=2)
     except Exception as exc:  # noqa: BLE001
         return _explain(exc)
 

@@ -38,7 +38,9 @@ apply tool cannot set one. Measured afterwards: a feature with an empty
 required selection is ERROR even when its body does nothing. So the
 roll-backs were not the model's code. The tool's own message said "the module
 compiles; the failure is in what it was asked to operate on", which was true
-but not actionable. Next: set selections through `deterministicIds`.
+but not actionable. Fixed the same day: `selections={"face": "top"}`, set
+through `deterministicIds`. On a real plate it left 60,350.4 mm3, matching the
+prediction exactly.
 
 **A self-report that was half right.** The session said each save cost "about
 10 requests from the ~100/day bucket". About 11 requests is right. But none of

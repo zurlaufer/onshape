@@ -178,6 +178,20 @@ class TestWriteSafetyAtTheToolSurface:
         assert payload["stage"] == "source"
         assert payload["api_requests_used"] == 0
 
+    async def test_a_selection_for_an_undeclared_parameter_is_refused_free(self):
+        """Onshape would ignore it silently, and the feature would regenerate
+        as ERROR with an empty selection. Workspace trial, 2026-11-25."""
+        from src.skills.templates import TEMPLATES
+        module = TEMPLATES["plate_pocket_pattern"].render_module(POCKET)
+        payload = json.loads(await server.frc_apply_featurescript(
+            where=f"{SCRATCH}/65294e9343b8524f94ad5093/4fa46792842ff31b21179dad",
+            module=module, feature_name="Pockets",
+            selections={"pocketFace": "top"}))
+        assert payload["ok"] is False
+        assert payload["stage"] == "selections"
+        assert payload["api_requests_used"] == 0
+        assert "face" in payload["error"], "should list what IS declared"
+
     async def test_a_probe_lambda_with_an_import_is_refused_locally(self):
         """The evaluate endpoint rejects it; no reason to spend a request
         learning that again."""

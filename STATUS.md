@@ -809,11 +809,13 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
     Now there is one studio per feature (`studio_name_for`) plus a separate preview studio,
     because previews restore their source. A feature is "ours" only if its namespace names
     this studio. Live: a second feature no longer touches the first, and the plate stays OK.
-    (b) **Measured, not fixed.** A feature whose required face parameter is empty
-    regenerates as ERROR even when its body does nothing, so any pick-a-face feature is
-    rolled back. **Next:** let `frc_apply_featurescript` set a query parameter through
-    `deterministicIds` (proved in `spike_tube_converter_query.py`), with face ids from
-    `bodydetails`.
+    (b) **Fixed.** A feature whose required face parameter is empty regenerates as ERROR
+    even when its body does nothing. `frc_apply_featurescript` now takes
+    `selections={"face": "top" | "bottom" | "largest_planar" | <id>}`, resolved from
+    `bodydetails` (solids only; ties broken by height), and sets it via `deterministicIds`.
+    An undeclared parameter is refused for free. Live: the pocket template, applied with
+    `{"face": "top"}` onto a 150 x 150 x 6.35 plate, left **60,350.4 mm3**, exactly what was
+    predicted. The plate feature stayed OK. **Next:** re-run T1 and T2 from the workspace.
     Quota: each apply costs about 11 requests, none of them evaluate, but 2 come from
     `GET .../features`, which showed ~94 remaining. Minor: `bucket_key` does not collapse
     the feature id in a DELETE path, so each rollback opens its own ledger entry.

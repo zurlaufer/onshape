@@ -405,11 +405,10 @@ async def persist_feature(
     not free to loop. It uses no evaluate requests. Write safety is enforced
     in the client.
 
-    A feature with a REQUIRED query parameter (a face to pocket) cannot go in
-    yet: inserted with the selection empty, even a feature whose body does
-    nothing regenerates as ERROR and is rolled back (measured 2026-11-25).
-    Setting the selection needs `deterministicIds`; see
-    scripts/spike_tube_converter_query.py.
+    A feature with a REQUIRED query parameter (a face to pocket) must be given
+    its selection in `parameters`. With the selection empty, even a feature
+    whose body does nothing regenerates as ERROR and is rolled back (measured
+    2026-11-25). `src/skills/selections.py` builds that parameter.
     """
     compiled, problems = await apply_module(
         client, module,

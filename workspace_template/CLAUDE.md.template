@@ -18,7 +18,9 @@ Everything Onshape-related goes through the `frc-cad-copilot` MCP tools:
   physics behind them (free, no Onshape requests).
 - `frc_probe_featurescript` — run FeatureScript against real geometry without
   saving anything (costs one request from a ~100/day bucket).
-- `frc_apply_featurescript` — insert a feature into a Part Studio.
+- `frc_apply_featurescript` — insert a feature into a Part Studio. If the
+  feature takes a face, pass `selections={{"face": "top"}}`. An empty
+  selection fails, and the tool rolls the feature back.
 
 This workspace has **no Bash, Edit or Write**, by design: a CAD session needs
 the tools above and nothing else. Read and Grep work, for `featurescript/`.
