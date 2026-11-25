@@ -59,6 +59,9 @@ constants), `climber.py` (over-centre lever), `geartrain.py` (shaft clearance).
   the status code as the signal.
 - **`evBox3d` accepts a `cSys`** — that is how a planar face is measured in its
   own plane (`planeToCSys(evPlane(...))`), giving clean u/v with w = 0.
+  **But the plane's x is the sketch's, not the face's:** a 150x75 plate drawn
+  at 30 deg on Top measured 167x140. Box along each straight edge and keep the
+  smallest — `src/skills/face_dimensions.py`.
 - **The evaluate endpoint runs real modelling ops and persists nothing.** Use
   `makeId("...")` for the Id. So a probe can build a body, cut it and measure —
   see `scripts/verify_pocket_geometry.py`.

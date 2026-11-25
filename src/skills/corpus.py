@@ -173,7 +173,11 @@ EXAMPLES: tuple[Example, ...] = (
             "here first. COMPOSED, NOT PROBED: every line comes from source that "
             "Onshape has accepted, but this exact lambda has never been sent. "
             "Check it for one request with frc_probe_featurescript before relying "
-            "on it, against a Part Studio that holds a solid body."
+            "on it, against a Part Studio that holds a solid body. CAUTION, "
+            "measured 2026-11-25: the plane's x axis is the sketch's, so a "
+            "150x75 mm plate drawn at 30 deg on Top measures 167x140 here. For "
+            "true width x height use src/skills/face_dimensions.py, which boxes "
+            "along each straight edge and keeps the smallest."
         ),
         ok=True,
     ),

@@ -79,6 +79,7 @@ worth repeating — see `FINDINGS.md`.
 | `src/physics/climber.py` | Rotating-arm climber kinematics. Over-centre lever, fold simulation, static-hold sizing. Pure. |
 | `src/physics/geartrain.py` | Spur stacks: centre distances, **the shaft-clearance constraint**, stack search, plate folding. Pure. |
 | `src/skills/climber_plate.py` | One concrete design + the FeatureScript that draws it. Single source of truth for the three climber scripts. |
+| `src/skills/face_dimensions.py` | "FRC Face Size" feature: width x height of a picked planar face, whole mm, minimum box over its edge directions. Probe verified 2026-11-25 (150x75 at 30 deg); the module has not been compiled live. |
 | `src/skills/templates/` | `Template` protocol + **three** templates: `tube_hole_pattern`, `gearbox_bore_pattern`, `plate_pocket_pattern`. |
 | `src/skills/validate.py` | Layers 1-4: structural, symbol, parameter, contract. All free. |
 | `src/skills/symbols.py` | ~130 curated symbols **plus names learned from every probe**. Warnings only. |
@@ -308,6 +309,14 @@ deferred for weeks; measured 2026-08-09 and closed.
 u/v extents with w = 0. That is what lets a pattern be laid out inside a face's real boundary
 instead of inside dimensions the caller claimed. In the module the face is a selection carrying
 `"Filter" : EntityType.FACE && GeometryType.PLANE`, so a bad pick is refused at selection time.
+
+**Correction, measured 2026-11-25: "own plane" fixes the normal, not the in-plane axes.** The
+plane's x comes from how the face was built. A 150 x 75 mm plate sketched at 30 deg on Top keeps
+Top's x, and `planeToCSys` measured it **167 x 140 mm** — exactly 150cos30 + 75sin30 by
+150sin30 + 75cos30. Boxing along each straight edge and keeping the smallest returned **150 x 75**
+(one evaluate request; `face_dimensions.render_probe`). `plate_pocket_pattern` still lays its grid
+along the plane's x, so on a plate drawn at an angle its pockets are solved against the wrong box.
+Not yet fixed there.
 
 **The evaluate endpoint runs real modelling operations, and persists nothing.** Also 2026-08-09,
 and it is the biggest capability found since the diagnostics. A single lambda can build a body,
