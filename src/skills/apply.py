@@ -54,6 +54,8 @@ __all__ = [
     "WritePolicy",
     "WriteRefused",
     "COPILOT_STUDIO_NAME",
+    "PREVIEW_STUDIO_NAME",
+    "studio_name_for",
     "decode_fsvalue",
     "ensure_feature_studio",
     "probe_body",
@@ -63,11 +65,30 @@ __all__ = [
 
 LIBRARY_VERSION = 3029
 
-#: Where generated modules live. One studio per document, named so a student
-#: can see at a glance which tab the copilot writes to — and so that the
-#: verification studio, whose source *is* restored, is never the same tab as a
-#: studio something has been inserted from.
+#: Where generated modules live: ONE STUDIO PER FEATURE, named after it, so a
+#: student can see which tab holds which feature's source.
+#:
+#: It used to be one studio per document, and that broke the second feature
+#: ever applied (measured 2026-11-25, workspace trial). Writing a module
+#: replaces the studio's whole source, so applying "Pocket Grid" erased the
+#: code "Plate" had been inserted from. The plate went to ERROR and its body
+#: vanished. Separate studios make features independent; re-applying the same
+#: feature name rewrites only its own studio, and the feature is repointed.
 COPILOT_STUDIO_NAME = "FRC Copilot"
+
+#: The studio a dry run compiles in and then restores. Nothing is ever inserted
+#: from it. Restoring a studio strands any feature inserted from it, so
+#: previews must never share a studio with a real feature.
+PREVIEW_STUDIO_NAME = f"{COPILOT_STUDIO_NAME} - preview"
+
+
+def studio_name_for(feature_name: str) -> str:
+    """The Feature Studio that holds one feature's source."""
+    name = f"{COPILOT_STUDIO_NAME} - {feature_name.strip()}"
+    if name == PREVIEW_STUDIO_NAME:
+        raise ValueError("'preview' is reserved for dry runs; name the feature "
+                         "something else")
+    return name
 
 
 async def ensure_feature_studio(
@@ -379,7 +400,16 @@ async def persist_feature(
         silently deleting a student's work to tidy up an error is worse than the
         error. The failure is reported instead.
 
-    Costs roughly 6-8 requests. Write safety is enforced in the client.
+    Costs about 11 requests, measured 2026-11-25. Two of them are
+    `GET .../features`, a bucket that reported only ~94 remaining, so this is
+    not free to loop. It uses no evaluate requests. Write safety is enforced
+    in the client.
+
+    A feature with a REQUIRED query parameter (a face to pocket) cannot go in
+    yet: inserted with the selection empty, even a feature whose body does
+    nothing regenerates as ERROR and is rolled back (measured 2026-11-25).
+    Setting the selection needs `deterministicIds`; see
+    scripts/spike_tube_converter_query.py.
     """
     compiled, problems = await apply_module(
         client, module,
@@ -406,9 +436,16 @@ async def persist_feature(
 
     part_studio = f"/partstudios/d/{document_id}/w/{workspace_id}/e/{part_studio_id}"
     existing = (await client.get(f"{part_studio}/features")).json()
+    # Ours only if it comes from THIS studio. The namespace is
+    # `e{studio}::m{microversion}`, and the part before `::` names the studio.
+    # A feature type alone is not enough: two studios can both define
+    # `frcPlate`, and updating the other one would repoint it at code it was
+    # never written from.
+    studio_prefix = namespace.split("::")[0]
     already = next(
         (f for f in existing.get("features", [])
-         if f.get("featureType") == feature_type), None)
+         if f.get("featureType") == feature_type
+         and str(f.get("namespace", "")).split("::")[0] == studio_prefix), None)
 
     payload: dict[str, Any] = {
         "btType": "BTMFeature-134",

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.skills.apply import persist_feature
+from src.skills.apply import PREVIEW_STUDIO_NAME, persist_feature, studio_name_for
 
 
 class _Response:
@@ -133,6 +133,36 @@ class TestIdempotence:
         assert client.features[0]["namespace"] != stale
 
 
+class TestOneStudioPerFeature:
+    """The workspace trial, 2026-11-25: a second feature, written into the same
+    studio, erased the first one's source and its plate vanished."""
+
+    def test_each_feature_gets_its_own_studio(self):
+        plate, pockets = studio_name_for("Plate"), studio_name_for("Pocket Grid")
+        assert plate != pockets
+        assert studio_name_for("Plate") == plate, "re-applying must find it again"
+
+    def test_previews_never_share_a_studio_with_a_feature(self):
+        """A preview restores its studio, and restoring strands features."""
+        assert PREVIEW_STUDIO_NAME not in {studio_name_for(n) for n in
+                                           ("Plate", "Pocket Grid", "Preview plate")}
+
+    def test_the_preview_name_is_reserved(self):
+        with pytest.raises(ValueError):
+            studio_name_for("preview")
+
+    async def test_a_same_type_feature_from_another_studio_is_not_ours(self):
+        """Two studios can both define `myFeature`. Updating the other one would
+        repoint it at code it was never written from."""
+        foreign = {"featureId": "F9", "featureType": "myFeature",
+                   "namespace": "eOTHER::m7", "name": "Someone else's"}
+        client = _FakeOnshape(existing=[foreign])
+        result = await persist(client)
+        assert result.ok and result.updated is False
+        assert foreign["namespace"] == "eOTHER::m7", "the foreign feature was touched"
+        assert len(client.features) == 2
+
+
 class TestRollback:
     async def test_a_failed_insert_is_removed_again(self):
         """We created it. Leaving something broken behind is the failure this
@@ -148,7 +178,7 @@ class TestRollback:
         student's work to tidy up an error is worse than the error."""
         client = _FakeOnshape(regen_status="ERROR", existing=[
             {"featureId": "F1", "featureType": "myFeature",
-             "name": "Climber Plate"}])
+             "namespace": "eSTUDIO::m0", "name": "Climber Plate"}])
         result = await persist(client)
         assert result.ok is False
         assert result.rolled_back is False

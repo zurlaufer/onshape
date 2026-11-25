@@ -73,11 +73,13 @@ from src.context.graph import AssemblyGraph
 from src.context.queries import assembly_overview, find_parts, fit_response
 from src.context.workspace import Target, Workspace, WorkspaceError
 from src.skills.apply import (
+    PREVIEW_STUDIO_NAME,
     ProbeCache,
     apply_module,
     ensure_feature_studio,
     persist_feature,
     probe_body,
+    studio_name_for,
 )
 from src.skills import standards
 from src.skills.templates import TEMPLATES
@@ -413,8 +415,11 @@ async def frc_apply_featurescript(
 
     spent = client.quota.requests_used
     try:
+        # One studio per feature, and a separate one for dry runs, which are
+        # restored afterwards. See COPILOT_STUDIO_NAME for the failure.
         studio_id = await ensure_feature_studio(
-            client, document_id=target.document_id, workspace_id=target.wvm_id)
+            client, document_id=target.document_id, workspace_id=target.wvm_id,
+            name=PREVIEW_STUDIO_NAME if preview else studio_name_for(feature_name))
 
         if preview:
             compiled, problems = await apply_module(

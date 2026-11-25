@@ -36,6 +36,8 @@ Windows venv path is hardcoded in `.mcp.json`; on macOS/Linux it is `.venv/bin/p
 - **Quota is metered per endpoint, not globally.** The FeatureScript evaluate
   bucket is **~100/day, shared**. It is the scarcest thing we call. Check before
   looping; `client.quota` reports it.
+  `GET .../partstudios/.../features` is nearly as tight (~94 seen); every
+  `frc_apply_featurescript` reads it twice.
 
 ## Prefer the community's geometry
 
@@ -72,6 +74,9 @@ constants), `climber.py` (over-centre lever), `geartrain.py` (shaft clearance).
 - **Restoring a Feature Studio strands any feature inserted from it.** A custom
   feature is pinned to the microversion that defined it. When persisting, do not
   restore, and repoint the inserted feature's namespace after every rewrite.
+- **A required `Query` parameter left empty regenerates as ERROR**, even if
+  the body does nothing. `frc_apply_featurescript` cannot set a selection yet,
+  so it rolls such a feature back. Ship a feature that needs no pick, or say so.
 - **Report lengths in whole millimetres.** `toString()` on a length renders
   `0.15000000000000002 meter`, which reads as a broken tool.
 

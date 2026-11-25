@@ -801,6 +801,22 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
      part of this project that arm C showed is portable.
    - **Borrow their persistent notes.** Arm A recorded its own lessons mid-run, with
      nobody asking.
+11. **Workspace trial, 2026-11-25: isolation held, and the apply path had two defects.**
+    The session stayed inside the tools (0 Bash; it read only the workspace corpus) and
+    reported gaps without routing around them. But:
+    (a) **Fixed.** All features in a document shared one Feature Studio, so applying a second
+    feature replaced the first one's source. The plate went to ERROR and its body vanished.
+    Now there is one studio per feature (`studio_name_for`) plus a separate preview studio,
+    because previews restore their source. A feature is "ours" only if its namespace names
+    this studio. Live: a second feature no longer touches the first, and the plate stays OK.
+    (b) **Measured, not fixed.** A feature whose required face parameter is empty
+    regenerates as ERROR even when its body does nothing, so any pick-a-face feature is
+    rolled back. **Next:** let `frc_apply_featurescript` set a query parameter through
+    `deterministicIds` (proved in `spike_tube_converter_query.py`), with face ids from
+    `bodydetails`.
+    Quota: each apply costs about 11 requests, none of them evaluate, but 2 come from
+    `GET .../features`, which showed ~94 remaining. Minor: `bucket_key` does not collapse
+    the feature id in a DELETE path, so each rollback opens its own ledger entry.
 10. **Two physics defects found against ReCalc (2026-11-23). Fixed, kernel-verified,
     and committed to the `gearbox` Part Studio (2026-11-24).**
     (a) **Done.** `geartrain.py` now rejects any pinion after stage 1 that is below

@@ -16,6 +16,38 @@ write the interpretation by hand, because the numbers do not contain it.
 
 ---
 
+## 2026-11-25 — first session from the separate workspace (T1 only)
+
+Transcript `2259470f`, run from `../frc-copilot` with Bash/Edit/Write denied.
+There were 20 tool calls: 0 Bash, and Read/Grep only on the workspace's
+`featurescript/`.
+
+**Isolation did what it was for.** The session answered correctly: 221.5 g,
+probed in the kernel, with 78 faces confirming all 36 corner fillets. When it
+got stuck it stopped and wrote up the tool's gaps for the team instead of
+scripting around them. Arm B did the opposite in the repo.
+
+**It found a defect no earlier test could.** Every test so far had applied
+one feature. This one applied a plate, then a pocket grid, and both went into
+the single per-document Feature Studio. The second write replaced the
+plate's source, the plate went to ERROR, and the Part Studio was left with no
+solid. Fixed the same day: one studio per feature.
+
+**And it found a limit.** The pocket feature needs a face selection, and the
+apply tool cannot set one. Measured afterwards: a feature with an empty
+required selection is ERROR even when its body does nothing. So the
+roll-backs were not the model's code. The tool's own message said "the module
+compiles; the failure is in what it was asked to operate on", which was true
+but not actionable. Next: set selections through `deterministicIds`.
+
+**A self-report that was half right.** The session said each save cost "about
+10 requests from the ~100/day bucket". About 11 requests is right. But none of
+them come from the evaluate bucket; 2 come from `GET .../features`, which
+turned out to be nearly as tight (~94 remaining). It is another reason to
+count from the ledger rather than from what a session says.
+
+---
+
 ## 2026-11-25 — Onshape Labs FS MCP vs ours: arms A, B and C
 
 Protocol: `docs/eval-onshape-fs-mcp.md`. Arm A = their server alone, from an
