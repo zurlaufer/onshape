@@ -16,6 +16,47 @@ write the interpretation by hand, because the numbers do not contain it.
 
 ---
 
+## 2026-11-25 — second workspace session, after the studio and selection fixes
+
+Transcript `137859bc`: T1 then T2, from `../frc-copilot`, with the fixes from the
+first session in place. 22 tool calls for both tasks; arm B used 49 for T1
+alone. 0 Bash, and reads only of the workspace corpus.
+
+**Both tasks finished, measured on the real part.**
+
+- T1: the plate was retried once (the model's own first module regenerated as
+  ERROR and was rolled back cleanly). Then the pocket grid went in with
+  `selections={"face": "top"}`, and a probe of the Part Studio read **221 g**
+  (82,030 mm3).
+- T2: the same feature was updated in place and read **271 g**. Each feature
+  has its own studio, and nothing was stranded.
+
+**What it exposed:**
+
+1. **T2 built first and warned after.** It ran `frc_check_design`, got both
+   rule warnings, applied the 2 mm ribs anyway (the user approved the write
+   prompt), then reported the warnings. Arm B refused before building, but B
+   had read the answer key in the repo, which framed T2 as a refusal test. So
+   **build-then-warn is the uncontaminated behaviour**. Nothing in the
+   workspace CLAUDE.md says to stop when a team rule fails.
+2. **The check does not say where a limit came from.** The session wrote: "The
+   check doesn't say whether the 3 mm limit is your team's own rule or a
+   built-in default." It is right. `team_note` is empty for a default, by
+   design. B and C knew it was a default only because they read
+   `standards.toml` in the repo. Isolation removed the file, and with it the
+   information.
+3. **On update, `top` is re-resolved on geometry that already includes this
+   feature.** T2 selected face `KMmE`, 9,582 mm2: the pocketed top face that the
+   feature itself had made. It worked, and the session flagged it on its own
+   as fragile. The selection should come from the model before this feature.
+   On an update, the simplest fix is to keep the query the feature already
+   has.
+4. **Leftover sheet bodies.** The Part Studio holds 1 solid plus 3 sheet
+   bodies, probably the features' sketches. Not verified which feature leaves
+   them.
+
+---
+
 ## 2026-11-25 — first session from the separate workspace (T1 only)
 
 Transcript `2259470f`, run from `../frc-copilot` with Bash/Edit/Write denied.
