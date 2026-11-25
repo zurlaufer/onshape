@@ -37,8 +37,15 @@ bypassed the tools with dozens of ad-hoc scripts.)
 - Writes go only to documents marked writable in the copilot's `robot.toml`.
   A refusal is the boundary working. Report it; do not look for a way round.
 - The team's shop rules (minimum rib, border, web, end mill) come from the
-  checks. **Never invent one of these numbers.** If a rule is a default
-  because the team has not set it, say so.
+  checks. **Never invent one of these numbers.** `frc_check_design` lists
+  each limit under `limits` and says whether the team set it or it is a
+  default. Say which.
+- **When a check warns that a design breaks a shop rule, stop before
+  `frc_apply_featurescript`.** Show the warning and the alternatives, and ask
+  whether to build it anyway. Building first and warning after leaves a part
+  in the team's document that someone has to notice and undo. (Measured
+  2026-11-25: a session built 2 mm ribs, then reported they were under the
+  3 mm minimum.)
 - Report lengths in whole millimetres.
 
 ## FeatureScript

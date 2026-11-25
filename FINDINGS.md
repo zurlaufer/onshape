@@ -52,8 +52,16 @@ alone. 0 Bash, and reads only of the workspace corpus.
    On an update, the simplest fix is to keep the query the feature already
    has.
 4. **Leftover sheet bodies.** The Part Studio holds 1 solid plus 3 sheet
-   bodies, probably the features' sketches. Not verified which feature leaves
-   them.
+   bodies. Measured afterwards: **they are the default planes**
+   (`qConstructionFilter` counts all 3), so nothing is left over. The
+   session's probe counted them, and it is now a trap.
+
+**Found while fixing these:** a pocket feature in another tab of the same
+document had stopped cutting. It shared the studio named "FRC Copilot -
+Pocket Grid 3x3" with this session's feature of the same name. Onshape moved
+it onto the new module, which does not define its type, and still reported it
+**OK** while the plate was back to 6 faces. A status check cannot see this.
+Studios are now keyed by feature and Part Studio.
 
 ---
 

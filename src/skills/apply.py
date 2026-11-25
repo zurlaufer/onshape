@@ -82,13 +82,20 @@ COPILOT_STUDIO_NAME = "FRC Copilot"
 PREVIEW_STUDIO_NAME = f"{COPILOT_STUDIO_NAME} - preview"
 
 
-def studio_name_for(feature_name: str) -> str:
-    """The Feature Studio that holds one feature's source."""
-    name = f"{COPILOT_STUDIO_NAME} - {feature_name.strip()}"
-    if name == PREVIEW_STUDIO_NAME:
+def studio_name_for(feature_name: str, part_studio_id: str) -> str:
+    """The Feature Studio that holds one feature's source, in one Part Studio.
+
+    Keyed by the Part Studio too, because a studio per feature NAME is still
+    shared across a document. Measured 2026-11-25: a workspace session applied
+    "Pocket Grid 3x3" in one tab, and the feature of that name in another tab
+    silently changed module. Onshape kept reporting it OK while it cut
+    nothing, and the plate was back to 6 faces. The id, not the tab's name,
+    because tabs get renamed and a new name would orphan the studio.
+    """
+    if feature_name.strip().lower() == "preview":
         raise ValueError("'preview' is reserved for dry runs; name the feature "
                          "something else")
-    return name
+    return f"{COPILOT_STUDIO_NAME} - {feature_name.strip()} [{part_studio_id[:8]}]"
 
 
 async def ensure_feature_studio(
@@ -348,6 +355,8 @@ class PersistResult:
     updated: bool = False
     #: True when a failed insert was removed again.
     rolled_back: bool = False
+    #: Query parameters left as the feature already had them on an update.
+    kept_selections: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -361,6 +370,8 @@ class PersistResult:
             out["updated_existing"] = True
         if self.rolled_back:
             out["rolled_back"] = True
+        if self.kept_selections:
+            out["kept_selections"] = self.kept_selections
         return out
 
 
@@ -374,6 +385,7 @@ async def persist_feature(
     part_studio_id: str,
     feature_name: str,
     parameters: list[dict[str, Any]] | None = None,
+    keep_existing_queries: set[str] | frozenset[str] = frozenset(),
 ) -> PersistResult:
     """Write a module and leave the feature in the Part Studio.
 
@@ -457,6 +469,27 @@ async def persist_feature(
         "subFeatures": [],
     }
 
+    # On an update, a selection named by geometry ("top") must not be resolved
+    # again. The model now includes this feature's own result. Measured
+    # 2026-11-25: re-applying a pocket grid chose the 9,582 mm2 pocketed top
+    # face that the grid had cut, not the 22,500 mm2 face it was given.
+    # Keep the query the feature already holds; Onshape stored it in its own
+    # canonical form, so it goes back unchanged.
+    kept: list[str] = []
+    if already is not None and keep_existing_queries:
+        current = {p.get("parameterId"): p for p in already.get("parameters") or []
+                   if p.get("btType") == "BTMParameterQueryList-148"
+                   and p.get("queries")}
+        merged = []
+        for param in payload["parameters"]:
+            pid = param.get("parameterId")
+            if pid in keep_existing_queries and pid in current:
+                merged.append(current[pid])
+                kept.append(pid)
+            else:
+                merged.append(param)
+        payload["parameters"] = merged
+
     if already is None:
         created = await client.post(
             f"{part_studio}/features", json_body={"feature": payload})
@@ -478,7 +511,7 @@ async def persist_feature(
                     "updated" if updated else "inserted", part_studio_id)
         return PersistResult(ok=True, feature_id=feature_id,
                              feature_type=feature_type, namespace=namespace,
-                             updated=updated)
+                             updated=updated, kept_selections=kept)
 
     trouble = [Problem(
         Severity.ERROR,
@@ -498,7 +531,7 @@ async def persist_feature(
                        "place."))
         return PersistResult(ok=False, problems=trouble, feature_id=feature_id,
                              feature_type=feature_type, namespace=namespace,
-                             updated=True)
+                             updated=True, kept_selections=kept)
 
     rolled_back = False
     try:

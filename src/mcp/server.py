@@ -83,6 +83,7 @@ from src.skills.apply import (
 )
 from src.skills import standards
 from src.skills.selections import (
+    SELECTORS,
     SelectionError,
     declared_query_parameters,
     query_parameter,
@@ -454,7 +455,8 @@ async def frc_apply_featurescript(
         # restored afterwards. See COPILOT_STUDIO_NAME for the failure.
         studio_id = await ensure_feature_studio(
             client, document_id=target.document_id, workspace_id=target.wvm_id,
-            name=PREVIEW_STUDIO_NAME if preview else studio_name_for(feature_name))
+            name=(PREVIEW_STUDIO_NAME if preview
+                  else studio_name_for(feature_name, target.element_id or "")))
 
         if preview:
             compiled, problems = await apply_module(
@@ -477,8 +479,15 @@ async def frc_apply_featurescript(
                 part_studio_id=target.element_id or "",
                 feature_name=feature_name,
                 parameters=parameters,
+                # Named selectors are kept on update; an explicit face id
+                # is the way to change the face. See persist_feature.
+                keep_existing_queries={pid for pid, sel in selections.items()
+                                       if sel in SELECTORS},
             )
             out = {"stage": "applied", **result.to_dict()}
+            for pid in result.kept_selections:
+                chosen[pid] = ("kept the face chosen when this feature was first "
+                               "inserted; pass a face id to change it")
             if chosen:
                 out["selected"] = chosen
             missing = sorted(declared - set(selections))
@@ -575,6 +584,22 @@ async def frc_check_design(design: str, parameters: dict) -> str:
         "api_requests_used": 0,
         "problems": [p.to_dict() for p in problems],
     }
+    # Where each of this design's limits comes from. A session in the team
+    # workspace cannot read standards.toml, and on 2026-11-25 one said "the
+    # check doesn't say whether the 3 mm limit is your team's own rule or a
+    # built-in default". Messages stay short (team_note is empty for a
+    # default, on purpose), so the source is stated once, here.
+    section = design.rsplit("_", 1)[0]
+    limits = {
+        f"{row['standard']}": (f"{row['value']:g} {row['unit']}, "
+                               + ("set by your team in standards.toml"
+                                  if row["team_set"] else
+                                  "a default; your team has not set it"))
+        for row in standards.STANDARDS.summary()
+        if row["standard"].startswith(section + ".")
+    }
+    if limits:
+        out["limits"] = limits
     if ok:
         out["derived"] = _derived_numbers(template, parameters)
         out["featurescript"] = {

@@ -138,18 +138,24 @@ class TestOneStudioPerFeature:
     studio, erased the first one's source and its plate vanished."""
 
     def test_each_feature_gets_its_own_studio(self):
-        plate, pockets = studio_name_for("Plate"), studio_name_for("Pocket Grid")
+        plate, pockets = studio_name_for("Plate", "PS1"), studio_name_for("Pocket Grid", "PS1")
         assert plate != pockets
-        assert studio_name_for("Plate") == plate, "re-applying must find it again"
+        assert studio_name_for("Plate", "PS1") == plate, "re-applying must find it again"
+
+    def test_the_same_name_in_another_part_studio_gets_another_studio(self):
+        """2026-11-25: "Pocket Grid 3x3" applied in one tab silently replaced
+        the module behind the same-named feature in another tab, which then
+        reported OK while cutting nothing."""
+        assert studio_name_for("Pocket Grid 3x3", "1bc8d6ddce99f930") !=             studio_name_for("Pocket Grid 3x3", "0f73aed1fd2d0035")
 
     def test_previews_never_share_a_studio_with_a_feature(self):
         """A preview restores its studio, and restoring strands features."""
-        assert PREVIEW_STUDIO_NAME not in {studio_name_for(n) for n in
+        assert PREVIEW_STUDIO_NAME not in {studio_name_for(n, "PS1") for n in
                                            ("Plate", "Pocket Grid", "Preview plate")}
 
     def test_the_preview_name_is_reserved(self):
         with pytest.raises(ValueError):
-            studio_name_for("preview")
+            studio_name_for("preview", "PS1")
 
     async def test_a_same_type_feature_from_another_studio_is_not_ours(self):
         """Two studios can both define `myFeature`. Updating the other one would
@@ -161,6 +167,33 @@ class TestOneStudioPerFeature:
         assert result.ok and result.updated is False
         assert foreign["namespace"] == "eOTHER::m7", "the foreign feature was touched"
         assert len(client.features) == 2
+
+
+class TestSelectionsOnUpdate:
+    """Re-resolving "top" on update picked the face the feature itself had cut."""
+
+    @staticmethod
+    def _query(pid, ids):
+        return {"btType": "BTMParameterQueryList-148", "parameterId": pid,
+                "queries": [{"btType": "BTMIndividualQuery-138",
+                             "deterministicIds": ids}]}
+
+    async def test_a_named_selection_keeps_the_original_face(self):
+        client = _FakeOnshape()
+        await persist(client, parameters=[self._query("face", ["TOP_BEFORE"])])
+        result = await persist(client, parameters=[self._query("face", ["TOP_AFTER"])],
+                               keep_existing_queries={"face"})
+        assert result.updated and result.kept_selections == ["face"]
+        ids = client.features[0]["parameters"][0]["queries"][0]["deterministicIds"]
+        assert ids == ["TOP_BEFORE"]
+
+    async def test_an_explicit_face_replaces_it(self):
+        client = _FakeOnshape()
+        await persist(client, parameters=[self._query("face", ["TOP_BEFORE"])])
+        result = await persist(client, parameters=[self._query("face", ["SIDE"])])
+        assert result.kept_selections == []
+        ids = client.features[0]["parameters"][0]["queries"][0]["deterministicIds"]
+        assert ids == ["SIDE"]
 
 
 class TestRollback:

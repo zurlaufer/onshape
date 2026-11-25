@@ -815,7 +815,20 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
     `bodydetails` (solids only; ties broken by height), and sets it via `deterministicIds`.
     An undeclared parameter is refused for free. Live: the pocket template, applied with
     `{"face": "top"}` onto a 150 x 150 x 6.35 plate, left **60,350.4 mm3**, exactly what was
-    predicted. The plate feature stayed OK. **Next:** re-run T1 and T2 from the workspace.
+    predicted. The plate feature stayed OK.
+    (c) **Second workspace session (T1+T2 done; FINDINGS 2026-11-25), and four follow-ups:**
+    - **A studio per feature name was still shared across Part Studios.** The same name in
+      another tab silently swapped that feature's module. Onshape still reported OK, but
+      nothing was cut, so status alone cannot catch it. The studio is now keyed by feature
+      AND Part Studio id.
+    - **Updates kept re-resolving `top`** on geometry that includes the feature's own cut.
+      Named selectors now keep the stored query on update; a face id changes it. Live:
+      8 mm -> 2 mm ribs as an update gave 60,350.4 then 42,062.4 mm3, both exact.
+    - **`frc_check_design` returns `limits`**, each marked team-set or default. The
+      workspace CLAUDE.md now says to stop before applying when a check warns.
+    - "Leftover sheet bodies" were the 3 default planes, so there was nothing to fix. That
+      is now a CLAUDE.md trap.
+    **Next:** re-run T2 alone from the workspace, to see that it stops before building.
     Quota: each apply costs about 11 requests, none of them evaluate, but 2 come from
     `GET .../features`, which showed ~94 remaining. Minor: `bucket_key` does not collapse
     the feature id in a DELETE path, so each rollback opens its own ledger entry.

@@ -77,6 +77,10 @@ constants), `climber.py` (over-centre lever), `geartrain.py` (shaft clearance).
 - **A required `Query` parameter left empty regenerates as ERROR**, even if
   the body does nothing. Pass `selections={"face": "top"}` (or `bottom`,
   `largest_planar`, a face id) to `frc_apply_featurescript`, or it rolls back.
+- **Every Part Studio has 3 SHEET bodies before you draw anything**: the
+  default planes. `qBodyType(..., BodyType.SHEET)` counts them; filter with
+  `qConstructionFilter(q, ConstructionObject.NO)`. A session reported them as
+  leftover sketches.
 - **Report lengths in whole millimetres.** `toString()` on a length renders
   `0.15000000000000002 meter`, which reads as a broken tool.
 

@@ -103,6 +103,15 @@ class TestCheckDesign:
         assert derived["pocket_mm"]["width"] == pytest.approx(36.6667, abs=1e-3)
         assert derived["mass_removed_g"] == pytest.approx(207.5, abs=1.0)
 
+    async def test_every_limit_says_where_it_came_from(self):
+        """A workspace session cannot read standards.toml; the check has to say
+        whether a limit is the team's or a default (2026-11-25)."""
+        payload = json.loads(await server.frc_check_design("plate_pocket_pattern", POCKET))
+        limits = payload["limits"]
+        assert "plate_pocket.min_rib_mm" in limits
+        assert all(("default" in v) or ("your team" in v) for v in limits.values())
+        assert not any(k.startswith("gearbox_bore.") for k in limits)
+
     async def test_gear_geometry_is_derived_too(self):
         payload = json.loads(await server.frc_check_design("gearbox_bore_pattern", {
             "driving_teeth": 14, "driven_teeth": 50, "bore_diameter": 12.7,
