@@ -57,13 +57,29 @@ def test_corpus_is_copied_for_grep(workspace):
         assert copy.read_text(encoding="utf-8") == example.read_text(encoding="utf-8")
 
 
-def test_repo_is_denied(workspace):
-    settings = json.loads(
-        (workspace / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    deny = settings["permissions"]["deny"]
-    for tool in ("Read", "Edit", "Write"):
-        assert any(rule.startswith(f"{tool}(//") and rule.endswith("/**)")
-                   for rule in deny)
+def _permissions(workspace: Path) -> dict:
+    return json.loads((workspace / ".claude" / "settings.json")
+                      .read_text(encoding="utf-8"))["permissions"]
+
+
+def test_repo_is_out_of_reach(workspace):
+    deny = _permissions(workspace)["deny"]
+    assert any(r.startswith("Read(//") and r.endswith("/**)") for r in deny)
+    # Bash was how evaluation sessions reached the source; a user session
+    # has no need to run commands or write files.
+    for tool in ("Bash", "Edit", "Write"):
+        assert tool in deny
+
+
+def test_only_the_writing_tool_asks(workspace):
+    perms = _permissions(workspace)
+    assert perms["ask"] == ["mcp__frc-cad-copilot__frc_apply_featurescript"]
+    assert not any("apply" in rule for rule in perms["allow"])
+
+
+def test_the_labs_server_is_off_here(workspace):
+    """Registered user-wide, not bound by robot.toml, holds a delete scope."""
+    assert "mcp__onshape-labs" in _permissions(workspace)["deny"]
 
 
 def test_windows_paths_become_posix_rules():

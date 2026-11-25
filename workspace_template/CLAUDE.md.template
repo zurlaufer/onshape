@@ -20,6 +20,9 @@ Everything Onshape-related goes through the `frc-cad-copilot` MCP tools:
   saving anything (costs one request from a ~100/day bucket).
 - `frc_apply_featurescript` — insert a feature into a Part Studio.
 
+This workspace has **no Bash, Edit or Write**, by design: a CAD session needs
+the tools above and nothing else. Read and Grep work, for `featurescript/`.
+
 **Never read, run or edit the copilot's source at `{repo}`.** Not with Read,
 not with Bash, not by importing it from a script. If a tool cannot do what is
 asked, say so plainly and say what would be needed. That gap is a finding

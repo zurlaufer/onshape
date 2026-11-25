@@ -16,9 +16,10 @@ What the workspace holds:
   CLAUDE.md              user-facing instructions; the FeatureScript traps are
                          copied from this repo's CLAUDE.md, so there is one source
   featurescript/         a copy of the worked-example corpus, for grep
-  .claude/settings.json  deny Read/Edit/Write on the repo. A guardrail, not a
-                         sandbox: Bash can still reach it, which is why
-                         CLAUDE.md says so in words too.
+  .claude/settings.json  reads and checks allowed, the one writing tool asks,
+                         Bash/Edit/Write denied, the repo unreadable, the
+                         Labs server off. Denying Bash is what closes the
+                         repo: it was the route the evaluation's sessions took.
 
 Re-run after changing CLAUDE.md or the corpus. It overwrites only the files above.
 Offline and free.
@@ -103,13 +104,33 @@ def build(target: Path) -> list[Path]:
     written.append(corpus)
 
     repo_rule = posix_rule_path(REPO) + "/**"
+    ours = "mcp__frc-cad-copilot__"
     # No auto-approval of the server: Claude Code ignores
     # `enableAllProjectMcpServers` in a project file (checked 2026-11-25, the
     # server still showed "Pending approval"), and rightly, since a folder
     # should not approve its own code. The user approves it once.
+    #
+    # The permissions encode what a user session needs, and nothing more:
+    #   allow  reads, checks and probes. They write nothing to Onshape; a probe
+    #          costs one scarce-bucket request, which the probe cache and the
+    #          quota floor already guard.
+    #   ask    frc_apply_featurescript, the only tool that writes to Onshape,
+    #          so the user sees every write.
+    #   deny   Bash, Edit and Write. A user session has no reason to run
+    #          commands or write files, and Bash was the hole in the repo deny
+    #          rules: the evaluation's sessions reached the source through it.
+    #          Also the Labs FS MCP, which is registered user-wide and is not
+    #          bound by robot.toml.
     settings = {
-        "permissions": {"deny": [f"Read({repo_rule})", f"Edit({repo_rule})",
-                                 f"Write({repo_rule})"]},
+        "permissions": {
+            "allow": [ours + tool for tool in (
+                "onshape_check_connection", "onshape_assembly_overview",
+                "onshape_find_part", "frc_list_checks", "frc_check_design",
+                "frc_probe_featurescript")],
+            "ask": [ours + "frc_apply_featurescript"],
+            "deny": ["Bash", "Edit", "Write", "NotebookEdit", "mcp__onshape-labs",
+                     f"Read({repo_rule})"],
+        },
     }
     (target / ".claude").mkdir(exist_ok=True)
     (target / ".claude" / "settings.json").write_text(

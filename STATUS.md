@@ -790,7 +790,8 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
      traps are copied from ours, the corpus, and Read/Edit/Write denied on the repo. The
      server now pins its cwd to the repo, so it finds `robot.toml` from anywhere (verified:
      9 targets). The deny rules are a guardrail, not a sandbox, because Bash can still reach
-     the repo. Not yet tried in a real session.
+     the repo. Bash, Edit and Write are denied there (Bash was the hole), the Labs server is
+     off, and only `frc_apply_featurescript` asks. Not yet tried in a real session.
    - **Done 2026-11-25: `plate_pocket_pattern` on angled plates.** Kernel-verified straight
      and at 30 deg; the old code fails the same check by 40.6 %. Side effect: its probe +
      module outgrew the 8 KB ceiling, so `frc_check_design` now drops `probe_body` first
