@@ -39,11 +39,52 @@ function(context is Context, queries)
             "Pocketing removes material, so it needs a solid plate.");
     }
 
+    // Boxed along the face's own sides, not the plane's x. planeToCSys keeps
+    // the x the face was BUILT with, so a plate sketched at 30 deg measured
+    // 167 x 140 instead of 150 x 75 and the grid was solved on the wrong box
+    // (measured 2026-11-25). Sketch on `alignedPlane`, which shares faceBox's axes.
     var facePlane = evPlane(context, { "face" : pocketFace });
-    var faceBox = evBox3d(context, {
-        "topology" : pocketFace,
-        "cSys" : planeToCSys(facePlane)
-    });
+
+    // Candidate box directions: the plane's own x, plus every straight edge.
+    // The plane fixes only the normal; its x axis is whatever the face was built
+    // with, and a box along it is too big for any face not square to it.
+    var axes = [facePlane.x];
+    var straightEdges = evaluateQuery(context, qGeometry(
+        qAdjacent(pocketFace, AdjacencyType.EDGE, EntityType.EDGE),
+        GeometryType.LINE));
+    for (var edge in straightEdges)
+    {
+        var direction = evEdgeTangentLine(context, {
+            "edge" : edge,
+            "parameter" : 0
+        }).direction;
+        var inPlane = direction - dot(direction, facePlane.normal) * facePlane.normal;
+        if (norm(inPlane) > 1e-9)
+        {
+            axes = append(axes, normalize(inPlane));
+        }
+    }
+
+    // Smallest box wins. `box` is a reserved word -- hence `faceBox`.
+    var faceBox = undefined;
+    var faceAxis = facePlane.x;
+    var faceArea = undefined;
+    for (var axis in axes)
+    {
+        var candidate = evBox3d(context, {
+            "topology" : pocketFace,
+            "cSys" : coordSystem(facePlane.origin, axis, facePlane.normal)
+        });
+        var area = (candidate.maxCorner[0] - candidate.minCorner[0]) *
+                   (candidate.maxCorner[1] - candidate.minCorner[1]);
+        if (faceBox == undefined || area < faceArea * (1 - 1e-9))
+        {
+            faceBox = candidate;
+            faceAxis = axis;
+            faceArea = area;
+        }
+    }
+    var alignedPlane = plane(facePlane.origin, facePlane.normal, faceAxis);
 
     var uSpan = faceBox.maxCorner[0] - faceBox.minCorner[0];
     var vSpan = faceBox.maxCorner[1] - faceBox.minCorner[1];

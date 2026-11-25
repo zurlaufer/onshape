@@ -532,13 +532,28 @@ async def frc_check_design(design: str, parameters: dict) -> str:
         out["note"] = ("Probe `probe_body` with frc_probe_featurescript, then "
                        "apply `module` with frc_apply_featurescript.")
 
+    # Degrade the probe first. The module is what gets applied, and
+    # frc_apply_featurescript compiles it and rolls back a failed insert, so the
+    # probe is a pre-check while the module is the deliverable. Measured
+    # 2026-11-25: boxing the face along its own edges took the pocket
+    # template's probe + module from 6.9 KB to 10.4 KB, over the 8 KB ceiling,
+    # and the old fallback then dropped both.
+    def module_only() -> dict:
+        trimmed = dict(out)
+        trimmed["featurescript"] = {"module": out["featurescript"]["module"]}
+        return trimmed
+
     return fit_response(
         [
             lambda: out,
+            *([module_only] if ok else []),
             lambda: {k: v for k, v in out.items() if k != "featurescript"},
         ],
-        narrow_hint="The generated source was omitted; re-run once the "
-                    "parameters settle.",
+        # fit_response replaces `note` with this whenever it degrades.
+        narrow_hint="If `probe_body` is missing, apply `module` directly with "
+                    "frc_apply_featurescript: it compiles the module and rolls "
+                    "back a failed insert. If all source is missing, re-run "
+                    "once the parameters settle.",
     )
 
 

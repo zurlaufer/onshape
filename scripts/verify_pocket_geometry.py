@@ -20,6 +20,10 @@ The grid arithmetic under test is spliced in from the template itself
 (`_grid_source`), not copied here, so this cannot pass against a stale copy.
 
     ./.venv/Scripts/python.exe scripts/verify_pocket_geometry.py
+    ./.venv/Scripts/python.exe scripts/verify_pocket_geometry.py --rotate 30
+
+`--rotate` draws the plate at an angle on Top. That is the case that broke the
+grid before 2026-11-25, and the removed volume must not change with it.
 
 Costs 1 request on the FeatureScript evaluate bucket (ceiling ~100/day).
 """
@@ -27,6 +31,7 @@ Costs 1 request on the FeatureScript evaluate bucket (ceiling ~100/day).
 from __future__ import annotations
 
 import asyncio
+import math
 import sys
 from pathlib import Path
 
@@ -60,7 +65,30 @@ PARAMS = {
 TOLERANCE = 0.005
 
 
-def build_probe(template, params: dict) -> str:
+def _outline(width: float, length: float, rotation_deg: float) -> str:
+    """The plate's sketch. Rotated in the SKETCH, never with a transform.
+
+    A transformed body carries its plane's x axis round with it, so a naive
+    box would come out right by luck. Drawing the rectangle at an angle on Top
+    is what a student does, and it is the case that broke the grid
+    (2026-11-25: 167 x 140 measured for a 150 x 75 plate).
+    """
+    if not rotation_deg:
+        return (f'    skRectangle(base, "outline", {{\n'
+                f'        "firstCorner"  : vector(0, 0) * millimeter,\n'
+                f'        "secondCorner" : vector({width:g}, {length:g}) * millimeter\n'
+                f'    }});')
+    a = math.radians(rotation_deg)
+    corners = [(x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a))
+               for x, y in ((0, 0), (width, 0), (width, length), (0, length))]
+    return "\n".join(
+        f'    skLineSegment(base, "side{i}", {{ '
+        f'"start" : vector({x0:.6f}, {y0:.6f}) * millimeter, '
+        f'"end" : vector({x1:.6f}, {y1:.6f}) * millimeter }});'
+        for i, ((x0, y0), (x1, y1)) in enumerate(zip(corners, corners[1:] + corners[:1])))
+
+
+def build_probe(template, params: dict, rotation_deg: float = 0.0) -> str:
     """A lambda that builds a plate, pockets it with the template's own grid,
     and reports the volume it removed."""
     thickness = float(params["plate_thickness"])
@@ -90,10 +118,7 @@ def build_probe(template, params: dict) -> str:
     var base = newSketchOnPlane(context, plateId + "sketch", {{
         "sketchPlane" : plane(vector(0, 0, 0) * meter, vector(0, 0, 1))
     }});
-    skRectangle(base, "outline", {{
-        "firstCorner"  : vector(0, 0) * millimeter,
-        "secondCorner" : vector({width:g}, {length:g}) * millimeter
-    }});
+{_outline(width, length, rotation_deg)}
     skSolve(base);
     opExtrude(context, plateId + "extrude", {{
         "entities"  : qSketchRegion(plateId + "sketch"),
@@ -110,7 +135,7 @@ def build_probe(template, params: dict) -> str:
     // --- cut the pockets --------------------------------------------------
     var cutId = makeId("verifyPockets");
     var sketch = newSketchOnPlane(context, cutId + "sketch", {{
-        "sketchPlane" : facePlane
+        "sketchPlane" : alignedPlane
     }});
     for (var row = 0; row < {rows}; row += 1)
     {{
@@ -149,6 +174,11 @@ def build_probe(template, params: dict) -> str:
 
 
 async def main() -> int:
+    rotation = 0.0
+    if "--rotate" in sys.argv:
+        rotation = float(sys.argv[sys.argv.index("--rotate") + 1])
+        print(f"Plate drawn at {rotation:g} deg on Top")
+        print()
     template = TEMPLATES["plate_pocket_pattern"]
 
     predicted_g = template.mass_removed_g(PARAMS)
@@ -163,7 +193,7 @@ async def main() -> int:
 
     async with OnshapeApiClient.from_env() as client:
         result = await probe_body(
-            client, build_probe(template, PARAMS),
+            client, build_probe(template, PARAMS, rotation),
             document_id=DOCUMENT_ID, workspace_id=WORKSPACE_ID,
             part_studio_id=PART_STUDIO_ID,
         )

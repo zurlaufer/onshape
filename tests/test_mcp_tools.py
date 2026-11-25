@@ -113,9 +113,19 @@ class TestCheckDesign:
     async def test_it_hands_back_source_to_probe_and_apply(self):
         """The composition the first real session showed the model wants:
         check, probe, apply."""
-        payload = json.loads(await server.frc_check_design("plate_pocket_pattern", POCKET))
+        payload = json.loads(await server.frc_check_design("gearbox_bore_pattern", {
+            "driving_teeth": 14, "driven_teeth": 50, "bore_diameter": 12.7,
+            "plate_width": 120.0, "plate_height": 90.0}))
         assert payload["featurescript"]["probe_body"].startswith("function(")
         assert "defineFeature" in payload["featurescript"]["module"]
+
+    async def test_over_the_ceiling_the_module_survives_the_probe(self):
+        """The pocket template's source outgrew 8 KB on 2026-11-25. The module
+        is the deliverable, and apply compiles it, so the probe goes first."""
+        payload = json.loads(await server.frc_check_design("plate_pocket_pattern", POCKET))
+        assert "defineFeature" in payload["featurescript"]["module"]
+        assert "probe_body" not in payload["featurescript"]
+        assert "frc_apply_featurescript" in payload["note"]
 
     async def test_an_impossible_layout_is_refused_for_nothing(self):
         """The number that justifies the whole local layer."""

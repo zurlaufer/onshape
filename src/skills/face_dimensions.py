@@ -38,6 +38,7 @@ from __future__ import annotations
 import math
 
 __all__ = [
+    "aligned_box_source",
     "FEATURE_NAME",
     "PROBE_PLATE_MM",
     "PROBE_ROTATION_DEG",
@@ -60,21 +61,30 @@ PROBE_ROTATION_DEG = 30.0
 _PROBE_THICKNESS_MM = 6.35
 
 
-def _measure_source(face_expr: str, indent: str) -> str:
-    """The shared body: measure one planar face and leave widthMm/heightMm.
+def aligned_box_source(face_var: str, indent: str) -> str:
+    """FeatureScript that boxes a planar face along its own sides.
 
-    Emitted into both the probe and the module so the two cannot drift; only
-    how the face is obtained differs.
+    `face_var` names a variable already holding the face query. Leaves:
+
+      facePlane    the face's plane, as `evPlane` gives it (for its normal)
+      faceBox      the minimum-area box, in the coordinates of `alignedPlane`
+      alignedPlane the face's plane with x turned to the box's u axis.
+                   Sketch on THIS, not `facePlane`, and a vector(u, v) in the
+                   sketch lands at the same point as (u, v) in `faceBox`.
+
+    Shared by `face_dimensions` and `plate_pocket_pattern`, so the fix for
+    angled plates lives in one place. A new axis must beat the incumbent by
+    more than rounding (1e-9 relative). Otherwise an axis-aligned rectangle,
+    where every candidate ties, could flip the grid 90 degrees on float noise.
     """
-    body = f"""var measuredFace = {face_expr};
-var facePlane = evPlane(context, {{ "face" : measuredFace }});
+    body = f"""var facePlane = evPlane(context, {{ "face" : {face_var} }});
 
 // Candidate box directions: the plane's own x, plus every straight edge.
 // The plane fixes only the normal; its x axis is whatever the face was built
 // with, and a box along it is too big for any face not square to it.
 var axes = [facePlane.x];
 var straightEdges = evaluateQuery(context, qGeometry(
-    qAdjacent(measuredFace, AdjacencyType.EDGE, EntityType.EDGE),
+    qAdjacent({face_var}, AdjacencyType.EDGE, EntityType.EDGE),
     GeometryType.LINE));
 for (var edge in straightEdges)
 {{
@@ -90,27 +100,44 @@ for (var edge in straightEdges)
 }}
 
 // Smallest box wins. `box` is a reserved word -- hence `faceBox`.
-var bestU = undefined;
-var bestV = undefined;
+var faceBox = undefined;
+var faceAxis = facePlane.x;
+var faceArea = undefined;
 for (var axis in axes)
 {{
-    var faceBox = evBox3d(context, {{
-        "topology" : measuredFace,
+    var candidate = evBox3d(context, {{
+        "topology" : {face_var},
         "cSys" : coordSystem(facePlane.origin, axis, facePlane.normal)
     }});
-    var u = faceBox.maxCorner[0] - faceBox.minCorner[0];
-    var v = faceBox.maxCorner[1] - faceBox.minCorner[1];
-    if (bestU == undefined || u * v < bestU * bestV)
+    var area = (candidate.maxCorner[0] - candidate.minCorner[0]) *
+               (candidate.maxCorner[1] - candidate.minCorner[1]);
+    if (faceBox == undefined || area < faceArea * (1 - 1e-9))
     {{
-        bestU = u;
-        bestV = v;
+        faceBox = candidate;
+        faceAxis = axis;
+        faceArea = area;
     }}
 }}
+var alignedPlane = plane(facePlane.origin, facePlane.normal, faceAxis);"""
+    return "\n".join(indent + line if line else "" for line in body.splitlines())
+
+
+def _measure_source(face_expr: str, indent: str) -> str:
+    """The shared body: measure one planar face and leave widthMm/heightMm.
+
+    Emitted into both the probe and the module so the two cannot drift; only
+    how the face is obtained differs.
+    """
+    head = f"{indent}var measuredFace = {face_expr};\n"
+    tail = """
+var bestU = faceBox.maxCorner[0] - faceBox.minCorner[0];
+var bestV = faceBox.maxCorner[1] - faceBox.minCorner[1];
 
 // Whole millimetres; width is the longer side so the labels never swap.
 var widthMm = round(max(bestU, bestV) / millimeter);
 var heightMm = round(min(bestU, bestV) / millimeter);"""
-    return "\n".join(indent + line if line else "" for line in body.splitlines())
+    return (head + aligned_box_source("measuredFace", indent) + "\n"
+            + "\n".join(indent + line if line else "" for line in tail.splitlines()))
 
 
 def _rotated_outline() -> list[tuple[float, float]]:

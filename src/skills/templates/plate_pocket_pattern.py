@@ -16,6 +16,11 @@ been deferring; these are the mechanics, measured live 2026-08-09:
     var box   = evBox3d(context, { "topology" : definition.face,
                                    "cSys" : planeToCSys(plane) });
 
+(Superseded 2026-11-25: the face's plane keeps the x axis the face was built
+with, so on a plate sketched at an angle that box is too big. The grid now
+uses `face_dimensions.aligned_box_source`, which boxes along the face's own
+straight edges. The history below is kept because it is how the idiom was found.)
+
 `evBox3d` accepts a coordinate system, so a planar face measured in its *own*
 plane comes back as clean u/v extents with w = 0. That is what makes a pocket
 grid layable inside a face's real boundary rather than inside dimensions the
@@ -46,6 +51,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..face_dimensions import aligned_box_source
 from ..standards import standard, team_note
 from .base import ParamSpec, Problem, Severity, check_required, merge_defaults
 
@@ -306,11 +312,11 @@ class PlatePocketPattern:
             "Pocketing removes material, so it needs a solid plate.");
     }}
 
-    var facePlane = evPlane(context, {{ "face" : pocketFace }});
-    var faceBox = evBox3d(context, {{
-        "topology" : pocketFace,
-        "cSys" : planeToCSys(facePlane)
-    }});
+    // Boxed along the face's own sides, not the plane's x. planeToCSys keeps
+    // the x the face was BUILT with, so a plate sketched at 30 deg measured
+    // 167 x 140 instead of 150 x 75 and the grid was solved on the wrong box
+    // (measured 2026-11-25). Sketch on `alignedPlane`, which shares faceBox's axes.
+{aligned_box_source("pocketFace", "    ")}
 
     var uSpan = faceBox.maxCorner[0] - faceBox.minCorner[0];
     var vSpan = faceBox.maxCorner[1] - faceBox.minCorner[1];
@@ -422,7 +428,7 @@ export const frcPlatePocketPattern = defineFeature(function(context is Context, 
 {self._grid_source(params, "definition.face")}
 
         var sketch = newSketchOnPlane(context, id + "pocketSketch", {{
-            "sketchPlane" : facePlane
+            "sketchPlane" : alignedPlane
         }});
 
         for (var row = 0; row < {rows}; row += 1)

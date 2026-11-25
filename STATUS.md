@@ -318,7 +318,9 @@ Top's x, and `planeToCSys` measured it **167 x 140 mm** — exactly 150cos30 + 7
 150sin30 + 75cos30. Boxing along each straight edge and keeping the smallest returned **150 x 75**
 (one evaluate request; `face_dimensions.render_probe`). `plate_pocket_pattern` still lays its grid
 along the plane's x, so on a plate drawn at an angle its pockets are solved against the wrong box.
-Not yet fixed there.
+**Fixed 2026-11-25.** Both now use `face_dimensions.aligned_box_source` and sketch on `alignedPlane`.
+`verify_pocket_geometry.py --rotate 30` passes at 0.0000 %. The old code, run on the same rotated plate
+as a control, cut 55.0 mm pockets in place of 36.7 and was off by **40.6 %**.
 
 **The evaluate endpoint runs real modelling operations, and persists nothing.** Also 2026-08-09,
 and it is the biggest capability found since the diagnostics. A single lambda can build a body,
@@ -789,8 +791,11 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
      server now pins its cwd to the repo, so it finds `robot.toml` from anywhere (verified:
      9 targets). The deny rules are a guardrail, not a sandbox, because Bash can still reach
      the repo. Not yet tried in a real session.
-   - **Fix `plate_pocket_pattern` on angled plates.** It lays its grid along the plane's x;
-     `face_dimensions.py` has the edge-direction fix.
+   - **Done 2026-11-25: `plate_pocket_pattern` on angled plates.** Kernel-verified straight
+     and at 30 deg; the old code fails the same check by 40.6 %. Side effect: its probe +
+     module outgrew the 8 KB ceiling, so `frc_check_design` now drops `probe_body` first
+     and keeps `module` (apply compiles it and rolls back). The module itself was not
+     compiled live.
    - **Publish the standards and traps as a skill** for the official server. That is the
      part of this project that arm C showed is portable.
    - **Borrow their persistent notes.** Arm A recorded its own lessons mid-run, with
