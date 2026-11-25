@@ -16,6 +16,61 @@ write the interpretation by hand, because the numbers do not contain it.
 
 ---
 
+## 2026-11-25 — Onshape Labs FS MCP vs ours: arms A and B
+
+Protocol: `docs/eval-onshape-fs-mcp.md`. Arm A = their server alone, from an
+empty folder. Arm B = ours alone. Transcripts were audited for separation: no A
+session could see our server, and no B session could see theirs. Counts come
+from the transcripts, not from memory.
+
+| Task | A (theirs) | B (ours) |
+|---|---|---|
+| T1 pocket plate | Correct (221.48 g), but **5 turns, 3 of them nudges**: the user inserted the feature by hand and fixed wrong defaults. 26 tool calls. | Correct, 1 turn, measured in the kernel. 49 tool calls, **36 of them Bash**. |
+| T2 ribs 2 mm | **Partial.** Recomputed by hand without running it. Warned only that ribs may "flex or chatter". No minimum, no area limit. | **Refused to build without approval.** Quoted both rules and said they are defaults because `standards.toml` is unset. 1 tool call, 23 s. |
+| T3 face size | **Hit `box`** (and in T1). `test_feature` reports every parse error as "could not find Trojan feature spec", with no line. 4 turns, 24 calls. | Did not hit `box`, because it `cat`ed `featurescript/failures/` first. 1 turn, 46 calls. **Edited the repo** (below). |
+| T4 bores | 46.990 mm, 1 turn. **Written to the server's own document**, not the URL given. | 46.990 mm in tab B, kernel-measured, 1 turn. |
+| T5 assembly | Correctly declined, invented nothing. | Answered, and found that no part has a material, so there is no mass. |
+
+**What the decision rule says so far.** A is worse than B on T1 and T3, and
+fails T2. So keep our FeatureScript path, and treat standards-driven
+checking as the differentiator. Arm C is still to run.
+
+**What their server does that ours does not:**
+
+- **Notes that persist across sessions** (`read/edit_featurescript_notes`).
+  Mid-run, arm A wrote down the `box` trap, the rotated-face trick and five
+  more lessons, unprompted. That is our `CLAUDE.md` + `featurescript/`, but
+  self-maintaining. It also means every later session inherits them, arm C
+  included.
+- Zero local setup: OAuth, no API keys, no venv, no `robot.toml`. 14 tools,
+  including `search_featurescript_documentation` and `get_api_usage`.
+
+**What it lacks:**
+
+- It does not insert a feature into the user's Part Studio. It writes the
+  Feature Studio and leaves insertion to the human, and `create_geometry`
+  goes to its own document.
+- Its errors are weak: "Trojan feature spec" is returned for every parse error.
+- No physics, no team rules, no assembly reads.
+
+**What arm B exposed about us:**
+
+1. **A session edited the copilot's own source.** T3 added
+   `src/skills/face_dimensions.py`, its tests, a `CLAUDE.md` trap and a
+   `STATUS.md` section, all from a one-line user prompt. The finding is real:
+   `planeToCSys` keeps the sketch's x axis, so a 150 × 75 plate drawn at 30°
+   measures 167 × 140, and `plate_pocket_pattern` lays its grid on that wrong
+   box. But a student's session must not rewrite the tool. Today the copilot
+   runs inside its own development repo, and `CLAUDE.md` tells it to update
+   `STATUS.md`. Real use needs a separate workspace that exposes only the MCP
+   server.
+2. **It still reaches past its tools.** That was 36 Bash and 10 Write calls in
+   T1, scripts importing `src.skills` directly. It is the same pattern as the
+   first real session (2026-08-09), and it costs about 2× the tool calls of
+   arm A.
+
+---
+
 ## 2026-11-23 — market review after a 3-month break
 
 Desk research, not a usage session: Chief Delphi, the Onshape and SolidWorks AI
