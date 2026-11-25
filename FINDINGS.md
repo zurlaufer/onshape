@@ -16,7 +16,7 @@ write the interpretation by hand, because the numbers do not contain it.
 
 ---
 
-## 2026-11-25 — Onshape Labs FS MCP vs ours: arms A and B
+## 2026-11-25 — Onshape Labs FS MCP vs ours: arms A, B and C
 
 Protocol: `docs/eval-onshape-fs-mcp.md`. Arm A = their server alone, from an
 empty folder. Arm B = ours alone. Transcripts were audited for separation: no A
@@ -68,6 +68,58 @@ checking as the differentiator. Arm C is still to run.
    T1, scripts importing `src.skills` directly. It is the same pattern as the
    first real session (2026-08-09), and it costs about 2× the tool calls of
    arm A.
+
+### Arm C: their server, run inside this repo (our server disabled)
+
+Separation held: no C session could see our server. Every task took one turn,
+or two in T4, where the second message was a pasted URL. That took 4 to 7
+minutes each, with no `box` hit.
+
+| Task | Arm C |
+|---|---|
+| T1 | 221.48 g, kernel-measured, but **in the Labs sandbox document, not tab C**. The user has to insert the feature by hand. |
+| T2 | **Refused to build.** Cited `min_rib_mm` and `max_removed_fraction` from `standards.toml`, said they are defaults, and suggested 7 mm ribs. The feature it wrote **warns on the team rules at regeneration**. Our standards carried over into their FeatureScript. |
+| T3 | 150 × 75 on the rotated plate, while the naive method gave 167 × 140. Whole mm. |
+| T4 | 46.990 + 0.076 mm running clearance = 47.066, stated openly. Again not inserted into tab C. |
+| T5 | Used neither MCP server. It **wrote a script on our `src.api` client** and answered from it. |
+
+**Quota.** The evaluate bucket read 96 before arm C and 95 after; the 1 is the
+reading itself. Arm C called their `test_feature`/`test_featurescript`
+throughout, so **their server does not draw on our per-endpoint evaluate
+bucket.** It does draw on the user's annual API allowance, which their
+`get_api_usage` reported at about 1,120 of 2,500 used.
+
+**Permissions** (Onshape → My Account → Applications): "create and modify
+Feature Studios; can create a memory document and a working document; can
+delete workspaces from the working document." So it does hold a delete
+capability. As far as we know, Onshape's OAuth scopes are per type and not
+per document, so "only its working document" is the server's own promise,
+not something Onshape enforces. That has not been verified here.
+
+### Protocol flaw: B and C could read the answer key
+
+The reference numbers live in `docs/eval-onshape-fs-mcp.md`, inside the repo
+that B and C ran in. Both read it (`cat`), and C also read the A/B results in
+`FINDINGS.md`; two C sessions flagged this themselves. Arm A, in an empty
+folder, could not. B's numbers come from tool outputs (`frc_check_design`,
+kernel probes), so they stand. C's clean wins are weaker evidence than they
+look. Next time, keep the answer key outside every arm's working directory,
+and run B and C from a separate workspace too, which is the same fix as
+finding 1 above.
+
+### Verdict
+
+- **Keep our FeatureScript path.** The deciding gap is not knowledge but
+  capability: their server cannot insert a feature into the user's Part
+  Studio, and no amount of `CLAUDE.md` changed that in arm C. Ours inserts,
+  verifies in the kernel, and measures the committed part.
+- **Our knowledge layer is portable.** `standards.toml`, the traps and the
+  corpus made their server avoid `box` and refuse 2 mm ribs. Their notes had
+  already taught it `box`, so only the standards result is cleanly ours. That
+  is the piece worth publishing as a skill other teams can load next to the
+  official server.
+- **Before any real user touches this, give it a separate workspace.** Both
+  B and C sessions read and, in B's case, edited the copilot's own source.
 
 ---
 

@@ -777,10 +777,18 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
    status string on failure; running `getFeatureStatus(context, id)` (or re-probing the
    body) through evaluate turns "REGEN_ERROR" into a fixable enum. Scarce-bucket cost only
    on failure. See `FINDINGS.md` 2026-08-11.
-9. **Evaluate Onshape Labs' official FeatureScript MCP against ours.** Launched
-   2026-08-11; it covers the write-probe-fix loop items 7 and 8 would improve, so
-   **run this before doing 7 or 8** — they may be moot. Protocol, reference numbers and
-   decision rule: `docs/eval-onshape-fs-mcp.md`. ~2 hours, ~2 scarce-bucket calls.
+9. **Done 2026-11-25: Onshape Labs' FS MCP vs ours. Keep ours.** Their server cannot
+   insert a feature into the user's Part Studio, and it failed the 2 mm rib rule when bare.
+   It does not use our evaluate bucket. Our standards and traps transferred to it in arm C.
+   Full record: `FINDINGS.md` 2026-11-25. Items 7 and 8 are live again. What it produced:
+   - **Run the copilot from a separate workspace** before any real user. B and C sessions
+     read the copilot's own source, and B edited it from a one-line prompt.
+   - **Fix `plate_pocket_pattern` on angled plates.** It lays its grid along the plane's x;
+     `face_dimensions.py` has the edge-direction fix.
+   - **Publish the standards and traps as a skill** for the official server. That is the
+     part of this project that arm C showed is portable.
+   - **Borrow their persistent notes.** Arm A recorded its own lessons mid-run, with
+     nobody asking.
 10. **Two physics defects found against ReCalc (2026-11-23). Fixed, kernel-verified,
     and committed to the `gearbox` Part Studio (2026-11-24).**
     (a) **Done.** `geartrain.py` now rejects any pinion after stage 1 that is below
