@@ -167,6 +167,15 @@ async def main() -> int:
             document_id=DOCUMENT_ID, workspace_id=WORKSPACE_ID,
             part_studio_id=PART_STUDIO_ID,
         )
+        # The request just made is the cheapest honest reading of the scarce
+        # evaluate bucket, so report it. The FS MCP evaluation
+        # (docs/eval-onshape-fs-mcp.md) uses this line as its before/after
+        # measurement.
+        for route, state in client.quota.snapshot().items():
+            if "featurescript" in route:
+                print(f"Quota: {route} has {state.get('remaining')} of "
+                      f"~{state.get('ceiling')} left")
+                print()
 
     if not result.ok:
         print("FAILED: Onshape rejected the probe.")
