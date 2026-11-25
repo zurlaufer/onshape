@@ -1,0 +1,76 @@
+"""The team workspace: separate from the source, and complete without it.
+
+Why it exists is in FINDINGS.md 2026-11-25: sessions run inside the repo read
+and rewrote the copilot's source. These tests pin that the workspace carries
+everything a session needs (the server, the traps, the corpus) and points
+away from the repo.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parent.parent
+_spec = importlib.util.spec_from_file_location(
+    "make_workspace", REPO / "scripts" / "make_workspace.py")
+mw = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(mw)
+
+
+@pytest.fixture
+def workspace(tmp_path: Path) -> Path:
+    mw.build(tmp_path)
+    return tmp_path
+
+
+def test_server_is_launched_by_absolute_path_with_repo_importable(workspace):
+    server = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
+    entry = server["mcpServers"]["frc-cad-copilot"]
+    assert Path(entry["command"]).is_absolute()
+    assert Path(entry["command"]).exists()
+    assert entry["args"] == ["-m", "src.mcp.server"]
+    assert Path(entry["env"]["PYTHONPATH"]) == REPO
+
+
+def test_traps_come_from_the_repo_claude_md_verbatim(workspace):
+    claude = (workspace / "CLAUDE.md").read_text(encoding="utf-8")
+    traps = mw.traps_section((REPO / "CLAUDE.md").read_text(encoding="utf-8"))
+    assert traps in claude
+    assert "`box` is a reserved word" in claude
+    assert "{traps}" not in claude and "{repo}" not in claude
+
+
+def test_developer_pointers_are_left_out(workspace):
+    """build_corpus.py and test_corpus.py are for developers, not users."""
+    claude = (workspace / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "build_corpus" not in claude
+    assert "test_corpus" not in claude
+
+
+def test_corpus_is_copied_for_grep(workspace):
+    for example in (REPO / "featurescript").rglob("*.fs"):
+        copy = workspace / example.relative_to(REPO)
+        assert copy.read_text(encoding="utf-8") == example.read_text(encoding="utf-8")
+
+
+def test_repo_is_denied(workspace):
+    settings = json.loads(
+        (workspace / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    deny = settings["permissions"]["deny"]
+    for tool in ("Read", "Edit", "Write"):
+        assert any(rule.startswith(f"{tool}(//") and rule.endswith("/**)")
+                   for rule in deny)
+
+
+def test_windows_paths_become_posix_rules():
+    assert mw.posix_rule_path(Path("C:/Users/x/onshape")).startswith("//c/Users/x/onshape")
+
+
+def test_refuses_to_build_inside_the_repo():
+    with pytest.raises(SystemExit):
+        mw.build(REPO / "inner-workspace")
+    assert not (REPO / "inner-workspace" / ".mcp.json").exists()

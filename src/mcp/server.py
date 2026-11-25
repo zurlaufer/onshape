@@ -3,9 +3,13 @@
 Step 2 of the walking skeleton: exactly one tool, to prove the wiring between
 Claude Code, this server, and the Onshape API.
 
-Launch from the project root:
+Launch it from anywhere, as long as the project root is importable:
 
-    python -m src.mcp.server
+    python -m src.mcp.server                       # from the project root
+    PYTHONPATH=<project root> python -m src.mcp.server   # from a workspace
+
+Users run it from a separate workspace (`scripts/make_workspace.py`), never
+from this repo, so a session cannot read or edit the copilot's own source.
 
 STDOUT DISCIPLINE  (measured on fastmcp 3.4.5, 2026-08-02 — do not re-litigate)
 ------------------------------------------------------------------------------
@@ -41,6 +45,19 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
+
+# Every file the server reads (`robot.toml`, `standards.toml`, `.env`, the
+# assembly and probe caches, `featurescript/`) is a path relative to the
+# working directory, and several are loaded at import time, just below. A
+# session started in a workspace folder would otherwise find none of them and
+# silently run with no targets and no write permission. So the server pins
+# its own working directory to the project root before anything is loaded.
+# Measured 2026-11-25, when the FS MCP evaluation showed that sessions run
+# inside this repo read and edit its source; the fix for that is a separate
+# workspace, which needs this.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+os.chdir(PROJECT_ROOT)
 
 from fastmcp import FastMCP
 

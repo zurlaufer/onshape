@@ -18,6 +18,10 @@ a session read STATUS.md twice, and still hit it.)
 ./.venv/Scripts/python.exe scripts/smoke_auth.py    # 1 request
 ```
 
+**People use the copilot from `../frc-copilot`, not from here.** Sessions run in
+this repo read and rewrite the source (FINDINGS 2026-11-25). Rebuild it with
+`scripts/make_workspace.py` after changing the traps below or `featurescript/`.
+
 Windows venv path is hardcoded in `.mcp.json`; on macOS/Linux it is `.venv/bin/python`.
 
 ## Hard rules

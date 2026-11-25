@@ -112,6 +112,8 @@ worth repeating — see `FINDINGS.md`.
 | `tests/test_corpus.py` | 8 tests. Pins that the directory exists, that no example has drifted from its renderer, and that every verified one is a sendable bare lambda. |
 | `tests/test_standards.py` | 17 tests: overrides, refusal of typo'd names, zero-disables-a-check, and that no file means no behaviour change. **389 total** (12 added 2026-11-23: hex pinion, NEO torque constant). |
 | `scripts/build_corpus.py` | Regenerates `featurescript/`. Offline, free, idempotent. |
+| `scripts/make_workspace.py` | **Builds the folder people actually use** (`../frc-copilot`), away from the source. Re-run after changing CLAUDE.md or the corpus. |
+| `workspace_template/` | The workspace's CLAUDE.md. Named `.template` so it never loads in a session here. |
 | `scripts/smoke_auth.py` | Gate 1 check. |
 | `scripts/check_no_print.py` | Enforces the stdout rule via AST. |
 | `.mcp.json` | **Committed.** Registers the server for Claude Code automatically. **Hardcodes the Windows venv path** `.venv/Scripts/python.exe` — on macOS/Linux this must become `.venv/bin/python`. JSON allows no comments, so the note lives here and in the README. |
@@ -781,8 +783,12 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
    insert a feature into the user's Part Studio, and it failed the 2 mm rib rule when bare.
    It does not use our evaluate bucket. Our standards and traps transferred to it in arm C.
    Full record: `FINDINGS.md` 2026-11-25. Items 7 and 8 are live again. What it produced:
-   - **Run the copilot from a separate workspace** before any real user. B and C sessions
-     read the copilot's own source, and B edited it from a one-line prompt.
+   - **Done 2026-11-25: a separate workspace.** `scripts/make_workspace.py` builds
+     `../frc-copilot`. It holds the server by absolute path, a user-facing CLAUDE.md whose
+     traps are copied from ours, the corpus, and Read/Edit/Write denied on the repo. The
+     server now pins its cwd to the repo, so it finds `robot.toml` from anywhere (verified:
+     9 targets). The deny rules are a guardrail, not a sandbox, because Bash can still reach
+     the repo. Not yet tried in a real session.
    - **Fix `plate_pocket_pattern` on angled plates.** It lays its grid along the plane's x;
      `face_dimensions.py` has the edge-direction fix.
    - **Publish the standards and traps as a skill** for the official server. That is the
