@@ -847,8 +847,8 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
     then built on request with WARNING. That exposed an update dropping a selection it was
     not given, which is now fixed and live-verified. A stale server (the editor keeps it
     alive across conversations) is now reported as `STALE_SERVER`; new code needs a
-    reconnect AND a new conversation. **Next:** the remaining items 7-8 and 10 (ReCalc
-    supply limit, battery sag, 11T Kraken pinion), or a session from a real student.
+    reconnect AND a new conversation. **Next:** the remaining items 7-8 and 10 (the
+    11T Kraken pinion), or a session from a real student.
     Quota: each apply costs about 11 requests, none of them evaluate, but 2 come from
     `GET .../features`, which showed ~94 remaining. Minor: `bucket_key` does not collapse
     the feature id in a DELETE path, so each rollback opens its own ledger entry.
@@ -864,8 +864,15 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
     shared studio, so the Tube Converter spike's `Extrude 1` at INFO failed a perfect plate.
     It also measured `parts[0]` blind. It now judges only its own feature and measures
     the part closest to the prediction.
-    **Left:** confirm that an 11T pinion is sold in the Kraken X60's bore. Still not done
-    from ReCalc: supply-current limit and battery sag in `simulate_fold`.
+    **Left:** confirm that an 11T pinion is sold in the Kraken X60's bore.
+    (c) **Done 2026-11-26: supply limit and battery sag in `simulate_fold`**, ported from
+    ReCalc's `ClampVoltageForCurrentLimits` and BatterySim (MIT, cited). It is opt-in
+    (`supply_limit_a`, `battery_resistance_ohm`) and reduces exactly to the old curve
+    without them; a test pins that. ReCalc's defaults (60 A supply per motor, 15 mOhm) live
+    in `climber_plate`, flagged as NOT this robot's numbers. The chosen 2 x 80 A design
+    folds in 0.449 s, not 0.402 s, with the battery at about 10.3 V; still inside 0.5 s.
+    **1 x 120 A went from 0.49 s OK to 0.67 s SLOW**, so two motors is now required, not
+    just better. Confirm the supply limit against Constants.java (item 2).
 
 **Not worth doing:** an assembly builder (mates do not survive a SolidWorks import,
 `graph.py` deliberately discards the occurrence data it would need, and a wrong mate fails
