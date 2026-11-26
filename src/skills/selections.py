@@ -19,6 +19,12 @@ WHICH FACE. A model cannot see the screen, so faces are named by geometry:
     "largest_planar"  biggest planar face; ties go to the highest
     "<face id>"       an id from bodydetails, passed through if it exists
 
+and for a parameter whose Filter is EntityType.BODY (the gearbox and tube
+templates):
+
+    "largest_solid"   the solid with the most surface area
+    "<body id>"       an id from bodydetails
+
 Only solid bodies are considered. A pocket in a surface removes nothing
 (learned the hard way; see plate_pocket_pattern). Ties are broken by height,
 then by id, so the same Part Studio always gives the same answer.
@@ -41,16 +47,24 @@ __all__ = [
     "ChosenFace",
     "SelectionError",
     "declared_query_parameters",
+    "declared_query_filters",
+    "resolve_body",
+    "declared_value_parameters",
+    "value_parameter",
     "resolve_face",
     "query_parameter",
 ]
 
-SELECTORS = ("top", "bottom", "largest_planar")
+SELECTORS = ("top", "bottom", "largest_planar", "largest_solid")
 
 #: A plane counts as "square to Z" when its normal is within this of +-Z.
 _AXIS_TOLERANCE = 1e-6
 
 _QUERY_DECLARATION = re.compile(r"definition\.(\w+)\s+is\s+Query\b")
+
+#: The annotation's Filter, then the declaration it belongs to.
+_QUERY_FILTER = re.compile(
+    r'"Filter"\s*:\s*EntityType\.(\w+)[^}]*\}\s*definition\.(\w+)\s+is\s+Query\b')
 
 
 class SelectionError(ValueError):
@@ -72,6 +86,35 @@ class ChosenFace:
 def declared_query_parameters(module: str) -> set[str]:
     """Parameter ids the module declares as `definition.<id> is Query`."""
     return set(_QUERY_DECLARATION.findall(module))
+
+
+def declared_query_filters(module: str) -> dict[str, str]:
+    """{parameter id: "FACE" | "BODY" | ...}, from each Query's Filter."""
+    return {pid: entity for entity, pid in _QUERY_FILTER.findall(module)}
+
+
+def resolve_body(bodydetails: dict[str, Any], selector: str) -> ChosenFace:
+    """The solid body a selector names, as a ChosenFace (id plus a line)."""
+    bodies = [b for b in (bodydetails.get("bodies", [])
+                          if isinstance(bodydetails, dict) else [])
+              if str(b.get("type", "")).upper() == "SOLID"]
+    if not bodies:
+        raise SelectionError("The Part Studio has no solid body to select.")
+
+    def surface(body: dict) -> float:
+        return sum(float(f.get("area", 0.0)) for f in body.get("faces") or [])
+
+    if selector == "largest_solid":
+        body = max(bodies, key=lambda b: (round(surface(b), 12), str(b.get("id"))))
+    else:
+        body = next((b for b in bodies if b.get("id") == selector), None)
+        if body is None:
+            raise SelectionError(
+                f"No solid body with id {selector!r}. Use 'largest_solid' or one "
+                f"of: {sorted(str(b.get('id')) for b in bodies)}.")
+    top = max((_height(f) for f in body.get("faces") or []), default=0.0)
+    return ChosenFace(face_id=str(body["id"]), body_id=str(body["id"]),
+                      area_mm2=surface(body) * 1e6, z_mm=top * 1000.0)
 
 
 def _planar_faces(bodydetails: dict[str, Any]) -> list[tuple[dict, str]]:
@@ -134,7 +177,34 @@ def resolve_face(bodydetails: dict[str, Any], selector: str) -> ChosenFace:
     return _chosen(face, body_id)
 
 
-def query_parameter(parameter_id: str, face_ids: list[str]) -> dict[str, Any]:
+_VALUE_DECLARATION = re.compile(
+    r"is(?:Length|Integer|Real|Angle)\(\s*definition\.(\w+)\s*,")
+
+
+def declared_value_parameters(module: str) -> set[str]:
+    """Parameter ids the module declares as lengths, angles, integers or reals.
+
+    Every one must be given a value when the feature is inserted through the
+    API. Measured 2026-11-26: Onshape fills a parameter's default only when
+    the feature is created in its UI. Inserted without values, the pocket
+    feature regenerated as ERROR; with "8 mm", "10 mm" and "6.35 mm" it left
+    exactly the predicted volume.
+    """
+    return set(_VALUE_DECLARATION.findall(module))
+
+
+def value_parameter(parameter_id: str, value: Any) -> dict[str, Any]:
+    """A quantity parameter, given as an Onshape expression ("8 mm", "3")."""
+    if isinstance(value, bool):
+        return {"btType": "BTMParameterBoolean-144", "parameterId": parameter_id,
+                "value": value, "parameterName": ""}
+    return {"btType": "BTMParameterQuantity-147", "parameterId": parameter_id,
+            "expression": str(value), "value": 0.0, "units": "",
+            "isInteger": isinstance(value, int), "parameterName": ""}
+
+
+def query_parameter(parameter_id: str, face_ids: list[str],
+                    entity: str = "FACE") -> dict[str, Any]:
     """The feature parameter that sets a face selection by deterministic id.
 
     Same shape as the spike that proved it, with a FACE filter in place of
@@ -148,7 +218,7 @@ def query_parameter(parameter_id: str, face_ids: list[str]) -> dict[str, Any]:
             "queryString": "",
             "deterministicIds": list(face_ids),
         }],
-        "filter": {"btType": "BTEntityTypeFilter-124", "entityType": "FACE"},
+        "filter": {"btType": "BTEntityTypeFilter-124", "entityType": entity},
         "parameterId": parameter_id,
         "parameterName": "",
     }

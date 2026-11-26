@@ -75,6 +75,27 @@ def test_declared_query_parameters_are_found():
     assert declared_query_parameters(module) == {"face"}
 
 
+def test_a_body_parameter_resolves_to_a_body():
+    from src.skills.selections import declared_query_filters, resolve_body
+    module = ('annotation { "Name" : "Plate", "Filter" : EntityType.BODY }\n'
+              '        definition.plate is Query;')
+    assert declared_query_filters(module) == {"plate": "BODY"}
+    assert resolve_body(PLATE, "largest_solid").body_id == "JHD"
+    with pytest.raises(SelectionError, match="JHD"):
+        resolve_body(PLATE, "nope")
+    assert query_parameter("plate", ["JHD"], entity="BODY")["filter"]["entityType"] == "BODY"
+
+
+def test_value_parameters_are_found_and_built():
+    from src.skills.selections import declared_value_parameters, value_parameter
+    module = ("isLength(definition.rib, RIB_BOUNDS);\n"
+              "isInteger(definition.count, POSITIVE_COUNT_BOUNDS);\n"
+              "definition.face is Query;")
+    assert declared_value_parameters(module) == {"rib", "count"}
+    rib = value_parameter("rib", "8 mm")
+    assert rib["btType"] == "BTMParameterQuantity-147" and rib["expression"] == "8 mm"
+
+
 def test_the_parameter_uses_deterministic_ids_and_a_face_filter():
     param = query_parameter("face", ["JHK"])
     assert param["btType"] == "BTMParameterQueryList-148"

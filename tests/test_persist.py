@@ -182,7 +182,7 @@ class TestSelectionsOnUpdate:
         client = _FakeOnshape()
         await persist(client, parameters=[self._query("face", ["TOP_BEFORE"])])
         result = await persist(client, parameters=[self._query("face", ["TOP_AFTER"])],
-                               keep_existing_queries={"face"})
+                               keep_existing={"face"})
         assert result.updated and result.kept_selections == ["face"]
         ids = client.features[0]["parameters"][0]["queries"][0]["deterministicIds"]
         assert ids == ["TOP_BEFORE"]
@@ -194,6 +194,49 @@ class TestSelectionsOnUpdate:
         assert result.kept_selections == []
         ids = client.features[0]["parameters"][0]["queries"][0]["deterministicIds"]
         assert ids == ["SIDE"]
+
+
+class TestStatusesThatMeanBuilt:
+    """reportFeatureInfo / reportFeatureWarning set INFO / WARNING on a
+    feature that worked. The pocket template reports its grams as INFO."""
+
+    @pytest.mark.parametrize("status", ["INFO", "WARNING"])
+    async def test_info_and_warning_are_not_rolled_back(self, status):
+        client = _FakeOnshape(regen_status=status)
+        result = await persist(client)
+        assert result.ok and not result.rolled_back
+        assert client.deleted == []
+        assert result.to_dict()["status"] == status
+
+    async def test_a_warning_is_passed_on(self):
+        result = await persist(_FakeOnshape(regen_status="WARNING"))
+        assert any("shop rule" in p.message for p in result.problems)
+
+
+class TestValues:
+    """Onshape fills no defaults for an API insert (2026-11-26)."""
+
+    @staticmethod
+    def _qty(pid, expr):
+        return {"btType": "BTMParameterQuantity-147", "parameterId": pid,
+                "expression": expr}
+
+    async def test_an_insert_without_a_declared_value_is_refused_unwritten(self):
+        client = _FakeOnshape()
+        result = await persist(client, parameters=[self._qty("rib", "8 mm")],
+                               required_on_insert={"rib", "border"})
+        assert not result.ok
+        assert client.features == [], "nothing may be inserted"
+        assert "border" in result.problems[0].message
+
+    async def test_an_update_keeps_values_it_was_not_given(self):
+        client = _FakeOnshape()
+        await persist(client, parameters=[self._qty("rib", "8 mm"), self._qty("border", "10 mm")],
+                      required_on_insert={"rib", "border"})
+        await persist(client, parameters=[self._qty("rib", "2 mm")],
+                      keep_existing={"border"}, required_on_insert={"rib", "border"})
+        stored = {p["parameterId"]: p["expression"] for p in client.features[0]["parameters"]}
+        assert stored == {"rib": "2 mm", "border": "10 mm"}
 
 
 class TestRollback:

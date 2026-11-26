@@ -52,6 +52,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..face_dimensions import aligned_box_source
+from .. import standards
 from ..standards import standard, team_note
 from .base import ParamSpec, Problem, Severity, check_required, merge_defaults
 
@@ -131,6 +132,18 @@ class PlatePocketPattern:
         width = (float(params["plate_width"]) - 2 * border - (cols - 1) * rib) / cols
         length = (float(params["plate_length"]) - 2 * border - (rows - 1) * rib) / rows
         return width, length
+
+    def apply_values(self, params: dict[str, Any]) -> dict[str, str]:
+        """The module's feature parameters, as Onshape expressions.
+
+        Onshape does not fill a parameter's default for a feature inserted
+        through the API (measured 2026-11-26), so these are passed explicitly.
+        """
+        params = merge_defaults(self.parameters(), params)
+        depth = float(params.get("pocket_depth") or params["plate_thickness"])
+        return {"rib": f"{float(params['rib_width']):g} mm",
+                "border": f"{float(params['border_width']):g} mm",
+                "depth": f"{depth:g} mm"}
 
     def mass_removed_g(self, params: dict[str, Any]) -> float:
         """Grams of aluminium the pockets take off. The point of the exercise."""
@@ -286,18 +299,37 @@ class PlatePocketPattern:
 
     # -------------------------------------------------------------- render
 
-    def _grid_source(self, params: dict[str, Any], face_expr: str) -> str:
+    def _grid_source(self, params: dict[str, Any], face_expr: str, *,
+                     from_definition: bool = False) -> str:
         """The shared body: measure the real face, then solve the grid on it.
 
         Emitted into both the probe and the module so the two cannot drift.
         `face_expr` is what differs — the probe has to *find* a face, the module
         is handed one by the student.
+
+        `from_definition` reads rib and border from the feature's own
+        parameters rather than baking them in. The module does that, so a
+        student can change the rib in Onshape's dialog. On 2026-11-26 a
+        session told a user to do exactly that, and the field did not exist.
+
+        Columns and rows stay baked in. Measured 2026-11-26: a module-level
+        `{ (unitless) : [1, 3, 50] } as IntegerBoundSpec` const stops the module
+        compiling (same at std 3132, with valueBounds imported, and with std's
+        1e5 max), although the same expression runs inside an evaluate lambda.
+        std's own POSITIVE_COUNT_BOUNDS compiles but defaults to 2, so the grid
+        would come out 2 x 2 unless apply could set integer values, which it
+        cannot yet.
         """
         params = merge_defaults(self.parameters(), params)
-        cols = int(params["columns"])
-        rows = int(params["rows"])
-        rib = float(params["rib_width"])
-        border = float(params["border_width"])
+        if from_definition:
+            values = {"border": "definition.border", "rib": "definition.rib",
+                      "cols": str(int(params["columns"])),
+                      "rows": str(int(params["rows"]))}
+        else:
+            values = {"border": f"{float(params['border_width']):g} * millimeter",
+                      "rib": f"{float(params['rib_width']):g} * millimeter",
+                      "cols": str(int(params["columns"])),
+                      "rows": str(int(params["rows"]))}
 
         return f"""    var pocketFace = {face_expr};
 
@@ -320,12 +352,14 @@ class PlatePocketPattern:
 
     var uSpan = faceBox.maxCorner[0] - faceBox.minCorner[0];
     var vSpan = faceBox.maxCorner[1] - faceBox.minCorner[1];
-    var border = {border:g} * millimeter;
-    var rib = {rib:g} * millimeter;
+    var border = {values["border"]};
+    var rib = {values["rib"]};
+    var cols = {values["cols"]};
+    var rows = {values["rows"]};
 
     // Solved against the face we were actually given, not the stated size.
-    var pocketU = (uSpan - 2 * border - {cols - 1} * rib) / {cols};
-    var pocketV = (vSpan - 2 * border - {rows - 1} * rib) / {rows};
+    var pocketU = (uSpan - 2 * border - (cols - 1) * rib) / cols;
+    var pocketV = (vSpan - 2 * border - (rows - 1) * rib) / rows;
 
     // Report in whole millimetres. `toString` on a length yields things like
     // "0.15000000000000002 meter", and a student reading that learns nothing
@@ -336,8 +370,9 @@ class PlatePocketPattern:
     if (pocketU <= 0 * millimeter || pocketV <= 0 * millimeter)
     {{
         throw regenError("The selected face is " ~ uText ~ " x " ~ vText ~
-            ", too small for {cols} x {rows} pockets with {border:g} mm " ~
-            "border and {rib:g} mm ribs.");
+            ", too small for " ~ cols ~ " x " ~ rows ~ " pockets with " ~
+            (round(border / millimeter * 10) / 10) ~ " mm border and " ~
+            (round(rib / millimeter * 10) / 10) ~ " mm ribs.");
     }}"""
 
     def render_probe(self, params: dict[str, Any]) -> str:
@@ -404,15 +439,38 @@ class PlatePocketPattern:
         params = merge_defaults(self.parameters(), params)
         cols = int(params["columns"])
         rows = int(params["rows"])
+        rib = float(params["rib_width"])
+        border = float(params["border_width"])
         thickness = float(params["plate_thickness"])
         depth = float(params.get("pocket_depth") or thickness)
+
+        # The team's limits, baked in, so a value edited in Onshape's dialog is
+        # still checked. Warnings, never errors: the rule is the team's to break.
+        def rule(key: str) -> tuple[float, str]:
+            origin = ("team rule" if standards.STANDARDS.is_team_set("plate_pocket", key)
+                      else "default")
+            return standard("plate_pocket", key), origin
+
+        (min_rib, rib_src) = rule("min_rib_mm")
+        (min_border, border_src) = rule("min_border_mm")
+        (max_frac, frac_src) = rule("max_removed_fraction")
+
+        def bounds(mm: float, low: float, high: float) -> str:
+            return (f"{{ (meter) : [{low / 1000:g}, {mm / 1000:g}, {high / 1000:g}], "
+                    f"(millimeter) : {mm:g}, (inch) : {mm / 25.4:.4g} }} as LengthBoundSpec")
 
         return f"""FeatureScript 3029;
 import(path : "onshape/std/geometry.fs", version : "3029.0");
 
 // Generated by frc-cad-copilot, template `{self.name}`.
-// Parameters: {_describe(params)}
-// Removes about {self.mass_removed_g(params):.0f} g of 6061 aluminium.
+// Defaults: {_describe(params)}
+// Rib, border and depth are feature parameters: change them in Onshape's
+// dialog. Breaking a shop rule there raises a warning, not an error. The grid
+// ({cols} x {rows}) is fixed; re-generate the feature to change it.
+const RIB_BOUNDS = {bounds(rib, 0.5, 100)};
+const BORDER_BOUNDS = {bounds(border, 0.5, 200)};
+const DEPTH_BOUNDS = {bounds(depth, 0.1, 100)};
+
 annotation {{ "Feature Type Name" : "FRC Plate Pocket Pattern" }}
 export const frcPlatePocketPattern = defineFeature(function(context is Context, id is Id, definition is map)
     precondition
@@ -423,17 +481,44 @@ export const frcPlatePocketPattern = defineFeature(function(context is Context, 
                      "Filter" : EntityType.FACE && GeometryType.PLANE,
                      "MaxNumberOfPicks" : 1 }}
         definition.face is Query;
+        annotation {{ "Name" : "Rib width" }}
+        isLength(definition.rib, RIB_BOUNDS);
+        annotation {{ "Name" : "Border width" }}
+        isLength(definition.border, BORDER_BOUNDS);
+        annotation {{ "Name" : "Pocket depth" }}
+        isLength(definition.depth, DEPTH_BOUNDS);
     }}
     {{
-{self._grid_source(params, "definition.face")}
+{self._grid_source(params, "definition.face", from_definition=True)}
+
+        // Shop rules, checked on every regeneration.
+        var removedFraction = cols * rows * pocketU * pocketV / (uSpan * vSpan);
+        var broken = "";
+        if (rib < {min_rib:g} * millimeter)
+            broken = broken ~ " Ribs are under {min_rib:g} mm ({rib_src}).";
+        if (border < {min_border:g} * millimeter)
+            broken = broken ~ " Border is under {min_border:g} mm ({border_src}).";
+        if (removedFraction > {max_frac:g})
+            broken = broken ~ " Pockets remove " ~ round(removedFraction * 100) ~
+                "% of the face, over {max_frac * 100:g}% ({frac_src}).";
+        var grams = cols * rows * pocketU * pocketV * definition.depth /
+            (millimeter ^ 3) * {ALUMINIUM_6061_DENSITY / 1e6:g};
+        var summary = cols ~ " x " ~ rows ~ " pockets of " ~
+            (round(pocketU / millimeter * 10) / 10) ~ " x " ~
+            (round(pocketV / millimeter * 10) / 10) ~ " mm, about " ~
+            round(grams) ~ " g of 6061 (square corners).";
+        if (broken != "")
+            reportFeatureWarning(context, id, summary ~ broken);
+        else
+            reportFeatureInfo(context, id, summary);
 
         var sketch = newSketchOnPlane(context, id + "pocketSketch", {{
             "sketchPlane" : alignedPlane
         }});
 
-        for (var row = 0; row < {rows}; row += 1)
+        for (var row = 0; row < rows; row += 1)
         {{
-            for (var col = 0; col < {cols}; col += 1)
+            for (var col = 0; col < cols; col += 1)
             {{
                 var uMin = faceBox.minCorner[0] + border + col * (pocketU + rib);
                 var vMin = faceBox.minCorner[1] + border + row * (pocketV + rib);
@@ -449,7 +534,7 @@ export const frcPlatePocketPattern = defineFeature(function(context is Context, 
             "entities" : qSketchRegion(id + "pocketSketch"),
             "direction" : -facePlane.normal,
             "endBound" : BoundingType.BLIND,
-            "endDepth" : {depth:g} * millimeter
+            "endDepth" : definition.depth
         }});
 
         opBoolean(context, id + "pocketRemove", {{

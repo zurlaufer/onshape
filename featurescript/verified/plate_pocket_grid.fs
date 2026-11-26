@@ -90,10 +90,12 @@ function(context is Context, queries)
     var vSpan = faceBox.maxCorner[1] - faceBox.minCorner[1];
     var border = 12 * millimeter;
     var rib = 8 * millimeter;
+    var cols = 3;
+    var rows = 3;
 
     // Solved against the face we were actually given, not the stated size.
-    var pocketU = (uSpan - 2 * border - 2 * rib) / 3;
-    var pocketV = (vSpan - 2 * border - 2 * rib) / 3;
+    var pocketU = (uSpan - 2 * border - (cols - 1) * rib) / cols;
+    var pocketV = (vSpan - 2 * border - (rows - 1) * rib) / rows;
 
     // Report in whole millimetres. `toString` on a length yields things like
     // "0.15000000000000002 meter", and a student reading that learns nothing
@@ -104,8 +106,9 @@ function(context is Context, queries)
     if (pocketU <= 0 * millimeter || pocketV <= 0 * millimeter)
     {
         throw regenError("The selected face is " ~ uText ~ " x " ~ vText ~
-            ", too small for 3 x 3 pockets with 12 mm " ~
-            "border and 8 mm ribs.");
+            ", too small for " ~ cols ~ " x " ~ rows ~ " pockets with " ~
+            (round(border / millimeter * 10) / 10) ~ " mm border and " ~
+            (round(rib / millimeter * 10) / 10) ~ " mm ribs.");
     }
 
     var largestSpan = max(uSpan, vSpan);

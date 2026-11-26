@@ -85,9 +85,13 @@ from src.skills import standards
 from src.skills.selections import (
     SELECTORS,
     SelectionError,
+    declared_query_filters,
     declared_query_parameters,
+    declared_value_parameters,
     query_parameter,
+    resolve_body,
     resolve_face,
+    value_parameter,
 )
 from src.skills.templates import TEMPLATES
 from src.skills.validate import validate_params, validate_source
@@ -378,6 +382,7 @@ async def frc_apply_featurescript(
     feature_name: str,
     preview: bool = False,
     selections: dict[str, str] | None = None,
+    values: dict[str, str | int | float | bool] | None = None,
 ) -> str:
     """Add a custom feature to a Part Studio, and leave it there.
 
@@ -408,6 +413,11 @@ async def frc_apply_featurescript(
             selection is empty regenerates as ERROR and is rolled back, so
             set every one. Values: "top", "bottom", "largest_planar" (planar
             faces of solid bodies), or a face id. The chosen face is reported.
+        values: Values for the module's length/angle/integer parameters, as
+            Onshape expressions, e.g. {"rib": "8 mm"}. Onshape does not fill
+            defaults for an API insert, so an insert needs every one. On an
+            update, give only what changes; the rest is kept. frc_check_design
+            returns the right `selections` and `values` under `apply_with`.
     """
     try:
         target = _resolve(where, expect="partstudio")
@@ -437,19 +447,36 @@ async def frc_apply_featurescript(
             "error": (f"{unknown} not declared as `definition.<id> is Query` in "
                       f"the module. Declared: {sorted(declared) or 'none'}.")},
             indent=2)
+    values = values or {}
+    declared_values = declared_value_parameters(module)
+    unknown = sorted(set(values) - declared_values)
+    if unknown:
+        return json.dumps({
+            "ok": False, "stage": "values", "api_requests_used": 0,
+            "error": (f"{unknown} not declared as a length, angle, integer or "
+                      f"real parameter in the module. Declared: "
+                      f"{sorted(declared_values) or 'none'}.")}, indent=2)
 
     spent = client.quota.requests_used
     chosen: dict[str, str] = {}
-    parameters: list[dict] = []
+    parameters: list[dict] = [value_parameter(pid, v) for pid, v in values.items()]
     try:
         if selections and not preview:
             details = (await client.get(
                 f"/partstudios/d/{target.document_id}/w/{target.wvm_id}"
                 f"/e/{target.element_id}/bodydetails")).json()
+            filters = declared_query_filters(module)
             for parameter_id, selector in selections.items():
-                face = resolve_face(details, selector)
-                parameters.append(query_parameter(parameter_id, [face.face_id]))
-                chosen[parameter_id] = face.describe()
+                if filters.get(parameter_id) == "BODY":
+                    body = resolve_body(details, selector)
+                    parameters.append(query_parameter(
+                        parameter_id, [body.body_id], entity="BODY"))
+                    chosen[parameter_id] = (f"body {body.body_id}: "
+                                            f"{body.area_mm2:,.0f} mm2 of surface")
+                else:
+                    face = resolve_face(details, selector)
+                    parameters.append(query_parameter(parameter_id, [face.face_id]))
+                    chosen[parameter_id] = face.describe()
 
         # One studio per feature, and a separate one for dry runs, which are
         # restored afterwards. See COPILOT_STUDIO_NAME for the failure.
@@ -481,13 +508,17 @@ async def frc_apply_featurescript(
                 parameters=parameters,
                 # Named selectors are kept on update; an explicit face id
                 # is the way to change the face. See persist_feature.
-                keep_existing_queries={pid for pid, sel in selections.items()
-                                       if sel in SELECTORS},
+                # Values not given are kept as they are on update.
+                keep_existing=(
+                    {pid for pid, sel in selections.items() if sel in SELECTORS}
+                    | (declared_values - set(values))),
+                required_on_insert=declared_values,
             )
             out = {"stage": "applied", **result.to_dict()}
             for pid in result.kept_selections:
-                chosen[pid] = ("kept the face chosen when this feature was first "
-                               "inserted; pass a face id to change it")
+                if pid in declared:
+                    chosen[pid] = ("kept the face chosen when this feature was "
+                                   "first inserted; pass a face id to change it")
             if chosen:
                 out["selected"] = chosen
             missing = sorted(declared - set(selections))
@@ -602,12 +633,22 @@ async def frc_check_design(design: str, parameters: dict) -> str:
         out["limits"] = limits
     if ok:
         out["derived"] = _derived_numbers(template, parameters)
+        module = template.render_module(parameters)
         out["featurescript"] = {
             "probe_body": template.render_probe(parameters),
-            "module": template.render_module(parameters),
+            "module": module,
+        }
+        # The arguments apply needs, so nobody has to work them out: Onshape
+        # fills no defaults for an API insert (measured 2026-11-26), and a
+        # selection left empty regenerates as ERROR.
+        out["apply_with"] = {
+            "selections": {pid: ("largest_solid" if entity == "BODY" else "top")
+                           for pid, entity in declared_query_filters(module).items()},
+            "values": getattr(template, "apply_values", lambda _p: {})(parameters),
         }
         out["note"] = ("Probe `probe_body` with frc_probe_featurescript, then "
-                       "apply `module` with frc_apply_featurescript.")
+                       "apply `module` with frc_apply_featurescript and the "
+                       "`apply_with` arguments. Check the selections fit.")
 
     # Degrade the probe first. The module is what gets applied, and
     # frc_apply_featurescript compiles it and rolls back a failed insert, so the
@@ -615,15 +656,24 @@ async def frc_check_design(design: str, parameters: dict) -> str:
     # 2026-11-25: boxing the face along its own edges took the pocket
     # template's probe + module from 6.9 KB to 10.4 KB, over the 8 KB ceiling,
     # and the old fallback then dropped both.
-    def module_only() -> dict:
+    def module_only(strip_comments: bool = False) -> dict:
+        module = out["featurescript"]["module"]
+        if strip_comments:
+            # The comments explain the code to a reader of the Feature Studio;
+            # Onshape does not need them. Measured 2026-11-26: with feature
+            # parameters and in-feature rule warnings the pocket module was
+            # 8.3 KB encoded, over the ceiling on its own, and 6.4 KB without
+            # its comments.
+            module = "\n".join(line for line in module.splitlines()
+                               if not line.strip().startswith("//"))
         trimmed = dict(out)
-        trimmed["featurescript"] = {"module": out["featurescript"]["module"]}
+        trimmed["featurescript"] = {"module": module}
         return trimmed
 
     return fit_response(
         [
             lambda: out,
-            *([module_only] if ok else []),
+            *([module_only, lambda: module_only(strip_comments=True)] if ok else []),
             lambda: {k: v for k, v in out.items() if k != "featurescript"},
         ],
         # fit_response replaces `note` with this whenever it degrades.

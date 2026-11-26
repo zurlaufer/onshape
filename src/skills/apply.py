@@ -65,6 +65,10 @@ __all__ = [
 
 LIBRARY_VERSION = 3029
 
+#: Regeneration statuses that mean the feature built. INFO and WARNING are
+#: set by reportFeatureInfo / reportFeatureWarning on a feature that worked.
+_BUILT_STATUSES = frozenset({"OK", "INFO", "WARNING"})
+
 #: Where generated modules live: ONE STUDIO PER FEATURE, named after it, so a
 #: student can see which tab holds which feature's source.
 #:
@@ -357,6 +361,8 @@ class PersistResult:
     rolled_back: bool = False
     #: Query parameters left as the feature already had them on an update.
     kept_selections: list[str] = field(default_factory=list)
+    #: Onshape's regeneration status: OK, INFO, WARNING or ERROR.
+    status: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -372,6 +378,8 @@ class PersistResult:
             out["rolled_back"] = True
         if self.kept_selections:
             out["kept_selections"] = self.kept_selections
+        if self.status and self.status != "OK":
+            out["status"] = self.status
         return out
 
 
@@ -385,7 +393,8 @@ async def persist_feature(
     part_studio_id: str,
     feature_name: str,
     parameters: list[dict[str, Any]] | None = None,
-    keep_existing_queries: set[str] | frozenset[str] = frozenset(),
+    keep_existing: set[str] | frozenset[str] = frozenset(),
+    required_on_insert: set[str] | frozenset[str] = frozenset(),
 ) -> PersistResult:
     """Write a module and leave the feature in the Part Studio.
 
@@ -475,20 +484,38 @@ async def persist_feature(
     # face that the grid had cut, not the 22,500 mm2 face it was given.
     # Keep the query the feature already holds; Onshape stored it in its own
     # canonical form, so it goes back unchanged.
+    # The same applies to a value nobody asked to change. An update sends the
+    # whole parameter list, and a value left out would be lost; Onshape does
+    # not fall back to the default for API writes (below).
     kept: list[str] = []
-    if already is not None and keep_existing_queries:
+    if already is not None and keep_existing:
         current = {p.get("parameterId"): p for p in already.get("parameters") or []
-                   if p.get("btType") == "BTMParameterQueryList-148"
-                   and p.get("queries")}
-        merged = []
-        for param in payload["parameters"]:
-            pid = param.get("parameterId")
-            if pid in keep_existing_queries and pid in current:
+                   if p.get("btType") != "BTMParameterQueryList-148" or p.get("queries")}
+        merged = [p for p in payload["parameters"]
+                  if p.get("parameterId") not in keep_existing
+                  or p.get("parameterId") not in current]
+        for pid in sorted(keep_existing):
+            if pid in current:
                 merged.append(current[pid])
                 kept.append(pid)
-            else:
-                merged.append(param)
         payload["parameters"] = merged
+
+    # An insert must carry every declared value. Measured 2026-11-26: Onshape
+    # fills a parameter's default only when a feature is made in its UI. The
+    # pocket feature inserted without its lengths regenerated as ERROR. Refuse
+    # before inserting anything, and say which are missing.
+    if already is None:
+        given = {p.get("parameterId") for p in payload["parameters"]}
+        missing = sorted(set(required_on_insert) - given)
+        if missing:
+            return PersistResult(ok=False, problems=[Problem(
+                Severity.ERROR,
+                f"{missing} have no value. Onshape does not fill parameter "
+                f"defaults for a feature inserted through the API, so it would "
+                f"regenerate as ERROR.",
+                suggestion="Pass them in `values`, e.g. {\"rib\": \"8 mm\"}; "
+                           "frc_check_design returns them under `apply_with`.")],
+                feature_type=feature_type, namespace=namespace)
 
     if already is None:
         created = await client.post(
@@ -506,12 +533,27 @@ async def persist_feature(
     status = (states.get("featureStates") or {}).get(
         feature_id, {}).get("featureStatus")
 
-    if status == "OK":
-        logger.info("feature %s %s in %s", feature_id,
-                    "updated" if updated else "inserted", part_studio_id)
-        return PersistResult(ok=True, feature_id=feature_id,
+    # INFO and WARNING are a feature that built and has something to say:
+    # reportFeatureInfo / reportFeatureWarning set them. The pocket template
+    # reports its grams as INFO and a broken shop rule as WARNING, so treating
+    # anything but OK as failure would roll back a working feature. Only ERROR
+    # (and a missing status) is a failure.
+    if status in _BUILT_STATUSES:
+        logger.info("feature %s %s in %s (%s)", feature_id,
+                    "updated" if updated else "inserted", part_studio_id, status)
+        notes = []
+        if status == "WARNING":
+            notes.append(Problem(
+                Severity.WARNING,
+                "The feature built, but it raised a warning in Onshape. Its "
+                "message is shown on the feature; for a generated template that "
+                "means a shop rule is broken.",
+                suggestion="Read the feature's message in Onshape, or re-run "
+                           "frc_check_design with the same values."))
+        return PersistResult(ok=True, problems=notes, feature_id=feature_id,
                              feature_type=feature_type, namespace=namespace,
-                             updated=updated, kept_selections=kept)
+                             updated=updated, kept_selections=kept,
+                             status=status)
 
     trouble = [Problem(
         Severity.ERROR,
