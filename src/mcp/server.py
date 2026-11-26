@@ -73,6 +73,7 @@ from src.context.graph import AssemblyGraph
 from src.context.queries import assembly_overview, find_parts, fit_response
 from src.context.workspace import Target, Workspace, WorkspaceError
 from src.skills.apply import (
+    COPILOT_STUDIO_NAME,
     PREVIEW_STUDIO_NAME,
     ProbeCache,
     apply_module,
@@ -261,29 +262,117 @@ async def onshape_assembly_overview(
     path: str | None = None,
     depth: int = 1,
 ) -> str:
-    """Show the structure of an Onshape assembly, or of one subassembly in it.
+    """Show what is in an assembly or a Part Studio.
 
-    Start with no `path` to see the top level, then drill in by passing the
-    `path` of a child from the previous result. Navigating down is much cheaper
-    and clearer than raising `depth`, which grows the result very fast.
+    ASSEMBLY: its structure, or one subassembly's. Start with no `path` to see
+    the top level, then drill in by passing the `path` of a child from the
+    previous result. Navigating down is much cheaper and clearer than raising
+    `depth`. Identical components collapse into one entry with a count.
 
-    Identical components are collapsed into one entry with a count, so four
-    matching swerve modules appear once as `count: 4` rather than four times.
+    PART STUDIO: its features in order, each with its status and its parameter
+    values (e.g. `rib: 8 mm`), and its parts. A feature the copilot applied
+    names the studio it came from. Read this before changing an existing
+    feature, rather than assuming its values. Costs one read from a ~94/day
+    bucket.
 
     Args:
-        where: Which assembly. A name from robot.toml (see
+        where: An assembly or Part Studio. A name from robot.toml (see
             `onshape_check_connection`), or a pasted Onshape URL. Copy the URL
-            with the *assembly* tab open — every tab has its own address.
-        path: Slash-separated component names from a previous result, e.g.
-            "Robot <1>/Drivetrain <1>". Omit for the top level.
-        depth: How many levels to show, 0-3. Defaults to 1.
+            with that tab open — every tab has its own address.
+        path: Assemblies only. Slash-separated component names from a previous
+            result, e.g. "Robot <1>/Drivetrain <1>". Omit for the top level.
+        depth: Assemblies only. How many levels to show, 0-3. Defaults to 1.
     """
     try:
-        target = _resolve(where, expect="assembly")
+        target = _resolve(where)
+        if not target.element_id:
+            raise WorkspaceError(
+                f"{where!r} names a document but not a tab. Open the assembly "
+                f"or Part Studio tab and copy its URL, or add it to robot.toml.")
+        client = get_client()
+        kind, studios = target.kind, {}
+        if kind in (None, "partstudio"):
+            # One cheap read (~9000/day) tells us what a pasted URL points at,
+            # and which Feature Studios are the copilot's.
+            elements = (await client.get(
+                f"/documents/d/{target.document_id}/{target.wvm}/{target.wvm_id}"
+                f"/elements")).json()
+            types = {e.get("id"): e.get("elementType") for e in elements}
+            studios = {e.get("id"): e.get("name") for e in elements
+                       if e.get("elementType") == "FEATURESTUDIO"}
+            if types.get(target.element_id) == "PARTSTUDIO":
+                kind = "partstudio"
+        if kind == "partstudio":
+            return await _partstudio_overview(client, target, studios)
         graph = await _load_graph(target)
     except Exception as exc:  # noqa: BLE001 - always answer the caller
         return _explain(exc)
     return assembly_overview(graph, path=path, depth=depth)
+
+
+def _parameter_value(param: dict) -> object:
+    """One parameter, as a person would read it in Onshape's dialog."""
+    kind = param.get("btType", "")
+    if kind.startswith("BTMParameterQuantity"):
+        return param.get("expression") or param.get("value")
+    if kind.startswith("BTMParameterQueryList"):
+        count = len(param.get("queries") or [])
+        return f"{count} selection{'s' if count != 1 else ''}"
+    if kind.startswith(("BTMParameterBoolean", "BTMParameterEnum", "BTMParameterString")):
+        return param.get("value")
+    return kind.split("-")[0].replace("BTMParameter", "").lower() or None
+
+
+async def _partstudio_overview(client, target: Target, studios: dict) -> str:
+    """Features, their status and values, and the parts of one Part Studio.
+
+    Exists because a session asked to "change the ribs to 2 mm" could not see
+    the feature it was changing, ran the check on an example's numbers instead,
+    and reported 66 % removed where the truth was 71 % (2026-11-26).
+    """
+    base = (f"/partstudios/d/{target.document_id}/{target.wvm}/{target.wvm_id}"
+            f"/e/{target.element_id}")
+    data = (await client.get(f"{base}/features")).json()
+    states = data.get("featureStates") or {}
+    features = []
+    for feature in data.get("features", []):
+        row: dict[str, object] = {
+            "name": feature.get("name"),
+            "type": feature.get("featureType"),
+            "status": (states.get(feature.get("featureId")) or {}).get("featureStatus"),
+        }
+        values = {p.get("parameterId"): _parameter_value(p)
+                  for p in feature.get("parameters") or [] if p.get("parameterId")}
+        if values:
+            row["values"] = values
+        studio = str(feature.get("namespace", "")).split("::")[0]
+        if studio.startswith("e") and studios.get(studio[1:], "").startswith(
+                COPILOT_STUDIO_NAME):
+            row["applied_by_copilot_from"] = studios[studio[1:]]
+        features.append(row)
+    parts = (await client.get(
+        f"/parts/d/{target.document_id}/{target.wvm}/{target.wvm_id}"
+        f"/e/{target.element_id}")).json()
+    payload = {
+        "part_studio": target.describe(),
+        "features": features,
+        "parts": [p.get("name") for p in parts],
+        "api_requests_used": 3,
+    }
+    # A team's real Part Studio can hold hundreds of features. Degrade to
+    # names and status, then to the last 40, rather than overflow.
+    return fit_response(
+        [
+            lambda: payload,
+            lambda: {**payload, "features": [
+                {k: f[k] for k in ("name", "status")} for f in features]},
+            lambda: {**payload, "features": [
+                {k: f[k] for k in ("name", "status")} for f in features[-40:]],
+                "features_omitted": max(0, len(features) - 40)},
+        ],
+        narrow_hint="Parameter values were trimmed to fit. Ask about one "
+                    "feature by name, or use a smaller Part Studio.",
+    )
 
 
 @mcp.tool

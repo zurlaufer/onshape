@@ -77,6 +77,12 @@ constants), `climber.py` (over-centre lever), `geartrain.py` (shaft clearance).
 - **A required `Query` parameter left empty regenerates as ERROR**, even if
   the body does nothing. Pass `selections={"face": "top"}` (or `bottom`,
   `largest_planar`, a face id) to `frc_apply_featurescript`, or it rolls back.
+- **Onshape fills no parameter defaults for a feature inserted by the API.**
+  An unset length regenerates as ERROR. Pass `values={"rib": "8 mm"}` to
+  `frc_apply_featurescript`; `frc_check_design` returns them under `apply_with`.
+- **A module-level `... as IntegerBoundSpec` const stops the module compiling**
+  (std 3029 and 3132), though it runs in an evaluate lambda. Use std's
+  `POSITIVE_COUNT_BOUNDS` (default 2) or keep counts out of the parameters.
 - **Every Part Studio has 3 SHEET bodies before you draw anything**: the
   default planes. `qBodyType(..., BodyType.SHEET)` counts them; filter with
   `qConstructionFilter(q, ConstructionObject.NO)`. A session reported them as

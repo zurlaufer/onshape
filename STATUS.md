@@ -828,7 +828,22 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
       workspace CLAUDE.md now says to stop before applying when a check warns.
     - "Leftover sheet bodies" were the 3 default planes, so there was nothing to fix. That
       is now a CLAUDE.md trap.
-    **Next:** re-run T2 alone from the workspace, to see that it stops before building.
+    (d) **T2 alone (2026-11-26): it stopped as asked**, but guessed what it could not see.
+    Three fixes followed, all live-verified:
+    - **C.** The known places list each document's id and tab id, so a pasted URL can be
+      matched. `bucket_key` now collapses feature and part ids.
+    - **A.** The pocket feature's rib, border and depth are Onshape parameters, editable
+      in the dialog. It reports grams as INFO and a broken shop rule as WARNING. Onshape
+      fills NO defaults for an API insert, so apply takes `values` (required on insert,
+      kept on update) and `frc_check_design` returns `apply_with`. INFO and WARNING no
+      longer roll back. Body selections (`largest_solid`) were added for the gearbox and
+      tube templates; that is unit-tested, and the mechanism was proved in Aug, but this
+      wrapper has not been run live. A custom IntegerBoundSpec const will not compile, so
+      columns and rows stay baked in. Live: changing only the rib gave 2 mm -> WARNING,
+      42,062.4 mm3; 8 mm -> INFO, 60,350.4 mm3.
+    - **B.** `onshape_assembly_overview` also reads a Part Studio: its features, status,
+      values, which copilot studio each came from, and its parts. 3 requests.
+    **Next:** re-run T2 from the workspace; it should read the feature and quote 71 %.
     Quota: each apply costs about 11 requests, none of them evaluate, but 2 come from
     `GET .../features`, which showed ~94 remaining. Minor: `bucket_key` does not collapse
     the feature id in a DELETE path, so each rollback opens its own ledger entry.

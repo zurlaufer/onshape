@@ -39,6 +39,10 @@ not to the model:**
    the face. **Generated features should expose their dimensions as feature
    parameters**, so a student can edit them in the Onshape UI without the
    copilot, and so the copilot can read them back.
+(All three were fixed the same day; see STATUS item 11(d). Fixing them
+turned up two more facts: Onshape fills no parameter defaults for an API
+insert, and a module-level IntegerBoundSpec const does not compile.)
+
 3. **"Your link may be read-only — perhaps 'robot parts'."**
    `onshape_check_connection` lists target names only, with no document ids
    and no writability, so the model could not match a pasted URL to the

@@ -13,14 +13,19 @@ Everything Onshape-related goes through the `frc-cad-copilot` MCP tools:
 
 - `onshape_check_connection` — is the copilot connected, and which documents
   it knows by name.
-- `onshape_assembly_overview`, `onshape_find_part` — read an assembly.
+- `onshape_assembly_overview` — read an assembly, **or a Part Studio's features
+  with their values** (`rib: 8 mm`). Read it before changing a feature; do not
+  assume its numbers. `onshape_find_part` — search an assembly.
 - `frc_list_checks`, `frc_check_design` — the team's design checks and the
   physics behind them (free, no Onshape requests).
 - `frc_probe_featurescript` — run FeatureScript against real geometry without
   saving anything (costs one request from a ~100/day bucket).
-- `frc_apply_featurescript` — insert a feature into a Part Studio. If the
-  feature takes a face, pass `selections={{"face": "top"}}`. An empty
-  selection fails, and the tool rolls the feature back.
+- `frc_apply_featurescript` — insert or update a feature. Pass what
+  `frc_check_design` returns under `apply_with`: `selections` (faces or
+  bodies) and `values` (dimensions). To change one dimension of an existing
+  feature, re-apply it with just that value, e.g. `values={{"rib": "3 mm"}}`;
+  everything else is kept. Generated features also expose their dimensions
+  in Onshape's own dialog.
 
 This workspace has **no Bash, Edit or Write**, by design: a CAD session needs
 the tools above and nothing else. Read and Grep work, for `featurescript/`.

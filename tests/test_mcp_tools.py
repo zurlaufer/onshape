@@ -219,11 +219,32 @@ class TestWhereResolution:
         assert "Elevator" in answer
         assert "scratch" in answer or "robot" in answer, "must list what exists"
 
-    async def test_the_wrong_tab_type_is_caught_before_a_request(self):
-        """The first real session's only 400: a Part Studio id passed to an
-        assembly tool. Now it never leaves the process."""
-        answer = await server.onshape_assembly_overview(where="scratch")
-        assert "partstudio" in answer and "assembly" in answer
+    async def test_a_part_studio_is_routed_to_its_feature_overview(self, monkeypatch):
+        """The first real session's only 400 was a Part Studio id passed to the
+        assembly tool. Since 2026-11-26 that is a supported request: a session
+        changing an existing feature must be able to read it first."""
+        class Client:
+            async def get(self, path, **_):
+                class R:
+                    def json(self_inner):
+                        return [{"id": "4fa46792842ff31b21179dad",
+                                 "elementType": "PARTSTUDIO"}]
+                return R()
+
+        async def overview(client, target, studios):
+            return "PART STUDIO OVERVIEW"
+
+        monkeypatch.setattr(server, "get_client", lambda: Client())
+        monkeypatch.setattr(server, "_partstudio_overview", overview)
+        assert await server.onshape_assembly_overview(where="scratch") == \
+            "PART STUDIO OVERVIEW"
+
+    def test_parameters_read_as_they_do_in_the_dialog(self):
+        read = server._parameter_value
+        assert read({"btType": "BTMParameterQuantity-147", "expression": "8 mm"}) == "8 mm"
+        assert read({"btType": "BTMParameterQueryList-148",
+                     "queries": [{}]}) == "1 selection"
+        assert read({"btType": "BTMParameterBoolean-144", "value": True}) is True
 
     def test_a_document_without_a_tab_is_refused_with_advice(self):
         empty = Workspace([Target(document_id=CITRUS, wvm_id="w" * 24,
