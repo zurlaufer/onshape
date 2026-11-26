@@ -16,6 +16,36 @@ write the interpretation by hand, because the numbers do not contain it.
 
 ---
 
+## 2026-11-26 — T2 passes end to end, and an update dropped a face
+
+A fresh workspace session, after a reconnect and `/clear`. Change Pocket
+Params to 2 mm ribs.
+
+**Phase 1, passed on every criterion.** It read the feature from the Part
+Studio: rib 8, border 10, depth 6.35, a 3 x 3 grid on a 150 x 150 plate. It
+ran the check with those numbers and gave 71 % removed and the 3 mm minimum,
+both called defaults. It **stopped before writing** and offered a table:
+3 mm -> 68 %, ~264 g; 7 mm -> 59.8 %, ~231 g. The numbers check out by hand.
+One slip: it said the team's numbers belong in `robot.toml`. The `limits`
+label said "default" without naming the file. It now says standards.toml.
+
+**Phase 2: "build it anyway".** The first write sent `values={"rib":
+"2 mm"}` and no selections. Border and depth were kept, but **the face was
+dropped**, and the feature regenerated as ERROR and stayed in the document
+(updates are never rolled back). The session saw it at once, re-applied with
+`selections={"face": "top"}`, got WARNING and about 272 g, and told the user
+plainly that the feature had sat in ERROR and that the face should be
+checked.
+
+**Cause:** the keep-on-update set held values not given, but only those
+selections given BY NAME. A selection not given at all was in neither set,
+so it was dropped. Fixed (`_keep_and_require`), and an insert now requires
+every declared selection as well as every value. Live: an update with only
+`values={"rib": "8 mm"}` kept the face, returned INFO, and left 60,350.4 mm3,
+exactly as predicted.
+
+---
+
 ## 2026-11-26 — T2 again: the server was half an hour old
 
 Transcript `14c95ea8`. The session reported that `onshape_assembly_overview`

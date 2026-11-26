@@ -843,7 +843,12 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
       42,062.4 mm3; 8 mm -> INFO, 60,350.4 mm3.
     - **B.** `onshape_assembly_overview` also reads a Part Studio: its features, status,
       values, which copilot studio each came from, and its parts. 3 requests.
-    **Next:** re-run T2 from the workspace; it should read the feature and quote 71 %.
+    (e) **T2 passed end to end (2026-11-26).** It read the feature, quoted 71 %, stopped,
+    then built on request with WARNING. That exposed an update dropping a selection it was
+    not given, which is now fixed and live-verified. A stale server (the editor keeps it
+    alive across conversations) is now reported as `STALE_SERVER`; new code needs a
+    reconnect AND a new conversation. **Next:** the remaining items 7-8 and 10 (ReCalc
+    supply limit, battery sag, 11T Kraken pinion), or a session from a real student.
     Quota: each apply costs about 11 requests, none of them evaluate, but 2 come from
     `GET .../features`, which showed ~94 remaining. Minor: `bucket_key` does not collapse
     the feature id in a DELETE path, so each rollback opens its own ledger entry.

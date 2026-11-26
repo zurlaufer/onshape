@@ -350,6 +350,30 @@ async def onshape_assembly_overview(
     return assembly_overview(graph, path=path, depth=depth)
 
 
+def _keep_and_require(declared_queries: set[str], declared_values: set[str],
+                      selections: dict, values: dict) -> dict[str, set[str]]:
+    """Which parameters an update keeps, and which an insert must carry.
+
+    An update KEEPS:
+      - a selection named by geometry ("top"): re-resolving it would see this
+        feature's own cut (2026-11-25);
+      - a selection NOT GIVEN at all. Measured 2026-11-26: re-applying with
+        only values={"rib": "2 mm"} kept border and depth but dropped the
+        face, and the feature sat in ERROR in the document until the session
+        re-applied with the face;
+      - a value not given.
+    An explicit face id, or a value that IS given, replaces what was there.
+
+    An insert must carry every declared selection and value: Onshape fills no
+    defaults for an API insert, and an empty selection is ERROR.
+    """
+    keep = ({pid for pid, sel in selections.items() if sel in SELECTORS}
+            | (declared_queries - set(selections))
+            | (declared_values - set(values)))
+    return {"keep_existing": keep,
+            "required_on_insert": declared_queries | declared_values}
+
+
 def _parameter_value(param: dict) -> object:
     """One parameter, as a person would read it in Onshape's dialog."""
     kind = param.get("btType", "")
@@ -694,13 +718,7 @@ async def frc_apply_featurescript(
                 part_studio_id=target.element_id or "",
                 feature_name=feature_name,
                 parameters=parameters,
-                # Named selectors are kept on update; an explicit face id
-                # is the way to change the face. See persist_feature.
-                # Values not given are kept as they are on update.
-                keep_existing=(
-                    {pid for pid, sel in selections.items() if sel in SELECTORS}
-                    | (declared_values - set(values))),
-                required_on_insert=declared_values,
+                **_keep_and_require(declared, declared_values, selections, values),
             )
             out = {"stage": "applied", **result.to_dict()}
             for pid in result.kept_selections:
@@ -813,7 +831,7 @@ async def frc_check_design(design: str, parameters: dict) -> str:
         f"{row['standard']}": (f"{row['value']:g} {row['unit']}, "
                                + ("set by your team in standards.toml"
                                   if row["team_set"] else
-                                  "a default; your team has not set it"))
+                                  "a default; your team can set it in standards.toml"))
         for row in standards.STANDARDS.summary()
         if row["standard"].startswith(section + ".")
     }

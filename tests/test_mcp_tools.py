@@ -284,6 +284,22 @@ class TestWhereResolution:
         assert got["columns"] == 3 and got["plate_thickness"] == 6.35
         assert server._generated_with("no header") is None
 
+    def test_an_update_keeps_a_selection_it_was_not_given(self):
+        """2026-11-26: values={"rib": "2 mm"} alone dropped the face, and the
+        feature sat in ERROR until the session re-applied with it."""
+        plan = server._keep_and_require({"face"}, {"rib", "border", "depth"},
+                                        selections={}, values={"rib": "2 mm"})
+        assert plan["keep_existing"] == {"face", "border", "depth"}
+
+    def test_an_explicit_face_id_or_given_value_replaces(self):
+        plan = server._keep_and_require({"face"}, {"rib"},
+                                        selections={"face": "JHK"}, values={"rib": "3 mm"})
+        assert plan["keep_existing"] == set()
+
+    def test_an_insert_needs_every_selection_and_value(self):
+        plan = server._keep_and_require({"face"}, {"rib"}, selections={}, values={})
+        assert plan["required_on_insert"] == {"face", "rib"}
+
     def test_parameters_read_as_they_do_in_the_dialog(self):
         read = server._parameter_value
         assert read({"btType": "BTMParameterQuantity-147", "expression": "8 mm"}) == "8 mm"

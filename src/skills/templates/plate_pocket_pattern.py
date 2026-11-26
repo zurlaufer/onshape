@@ -448,7 +448,7 @@ class PlatePocketPattern:
         # still checked. Warnings, never errors: the rule is the team's to break.
         def rule(key: str) -> tuple[float, str]:
             origin = ("team rule" if standards.STANDARDS.is_team_set("plate_pocket", key)
-                      else "default")
+                      else "default, settable in standards.toml")
             return standard("plate_pocket", key), origin
 
         (min_rib, rib_src) = rule("min_rib_mm")
