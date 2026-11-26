@@ -77,6 +77,14 @@ def test_only_the_writing_tool_asks(workspace):
     assert not any("apply" in rule for rule in perms["allow"])
 
 
+def test_vendor_pages_are_readable_but_search_still_asks(workspace):
+    allow = _permissions(workspace)["allow"]
+    assert "WebFetch(domain:docs.wcproducts.com)" in allow
+    assert "WebFetch(domain:reca.lc)" in allow
+    assert not any(rule.startswith("WebSearch") for rule in allow)
+    assert "WebFetch" not in allow, "an open WebFetch would allow every site"
+
+
 def test_the_labs_server_is_off_here(workspace):
     """Registered user-wide, not bound by robot.toml, holds a delete scope."""
     assert "mcp__onshape-labs" in _permissions(workspace)["deny"]

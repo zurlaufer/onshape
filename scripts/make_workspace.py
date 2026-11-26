@@ -37,6 +37,19 @@ REPO = Path(__file__).resolve().parent.parent
 TEMPLATE = REPO / "workspace_template" / "CLAUDE.md.template"
 DEFAULT_TARGET = REPO.parent / "frc-copilot"
 
+#: Pages a session may READ without asking: vendor catalogues and docs, the
+#: community's FeatureScript library and the two FRC calculators. The 11T
+#: pinion that shipped for three months (FINDINGS 2026-11-23) was a number
+#: nobody checked against a catalogue. A general WebSearch still asks, and
+#: so does any other site.
+TRUSTED_HOSTS = (
+    "docs.wcproducts.com", "wcproducts.com",
+    "docs.revrobotics.com", "www.revrobotics.com",
+    "v6.docs.ctr-electronics.com", "store.ctr-electronics.com",
+    "frcdesign.org", "www.frcdesign.org",
+    "reca.lc", "ambcalc.com",
+)
+
 
 def python_executable() -> Path:
     """The repo's venv interpreter, Windows or POSIX layout."""
@@ -126,7 +139,8 @@ def build(target: Path) -> list[Path]:
             "allow": [ours + tool for tool in (
                 "onshape_check_connection", "onshape_assembly_overview",
                 "onshape_find_part", "frc_list_checks", "frc_check_design",
-                "frc_probe_featurescript")],
+                "frc_probe_featurescript")]
+            + [f"WebFetch(domain:{host})" for host in TRUSTED_HOSTS],
             "ask": [ours + "frc_apply_featurescript"],
             "deny": ["Bash", "Edit", "Write", "NotebookEdit", "mcp__onshape-labs",
                      f"Read({repo_rule})"],
