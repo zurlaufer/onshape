@@ -16,6 +16,36 @@ write the interpretation by hand, because the numbers do not contain it.
 
 ---
 
+## 2026-11-26 — T2 alone from the workspace: it stopped, but it was guessing
+
+Prompt: "change the Pocket Grid 3x3 feature to ribs 2 mm". There was no
+apply call.
+
+**What was being tested passed.** It ran the check, did not build, quoted both
+rules, and said that 3 mm and 60 % are defaults the team has not set. It
+offered 3 mm, 2 mm anyway, or fewer pockets. The workspace rule and the new
+`limits` field did their jobs.
+
+**Three things it said were wrong, and each traces to a missing capability,
+not to the model:**
+
+1. **"About 66 % removed".** The truth is 71 %. It could not read the existing
+   feature, so it ran the check on the corpus example's parameters (12 mm
+   border, not 10) and said so: "I haven't measured your actual plate". **No
+   tool reads a Part Studio's features or their parameters.**
+   `onshape_assembly_overview` reads assemblies only.
+2. **"Change the rib value by hand in Onshape."** You can't. The generated
+   module bakes rib, border and grid into its source; its only parameter is
+   the face. **Generated features should expose their dimensions as feature
+   parameters**, so a student can edit them in the Onshape UI without the
+   copilot, and so the copilot can read them back.
+3. **"Your link may be read-only — perhaps 'robot parts'."**
+   `onshape_check_connection` lists target names only, with no document ids
+   and no writability, so the model could not match a pasted URL to the
+   list. The URL was writable.
+
+---
+
 ## 2026-11-25 — second workspace session, after the studio and selection fixes
 
 Transcript `137859bc`: T1 then T2, from `../frc-copilot`, with the fixes from the
