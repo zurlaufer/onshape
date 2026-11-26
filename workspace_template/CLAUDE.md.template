@@ -53,7 +53,8 @@ bypassed the tools with dozens of ad-hoc scripts.)
   in the team's document that someone has to notice and undo. (Measured
   2026-11-25: a session built 2 mm ribs, then reported they were under the
   3 mm minimum.)
-- Report lengths in whole millimetres.
+- Report computed lengths in whole millimetres, but quote a value someone set
+  (6.35 mm stock) exactly as set.
 
 ## FeatureScript
 

@@ -87,8 +87,9 @@ constants), `climber.py` (over-centre lever), `geartrain.py` (shaft clearance).
   default planes. `qBodyType(..., BodyType.SHEET)` counts them; filter with
   `qConstructionFilter(q, ConstructionObject.NO)`. A session reported them as
   leftover sketches.
-- **Report lengths in whole millimetres.** `toString()` on a length renders
-  `0.15000000000000002 meter`, which reads as a broken tool.
+- **Report computed lengths in whole millimetres.** `toString()` on a length
+  renders `0.15000000000000002 meter`, which reads as a broken tool. Quote a
+  value someone set (6.35 mm stock, a 3.175 mm cutter) exactly as set.
 
 Before writing FeatureScript, `grep featurescript/` for a worked example. Four
 are committed there — the face idiom, a build-cut-measure probe, a pocket grid,

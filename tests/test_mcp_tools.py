@@ -270,6 +270,20 @@ class TestWhereResolution:
         assert await server.onshape_assembly_overview(where="scratch") == \
             "PART STUDIO OVERVIEW"
 
+    def test_part_sizes_come_from_vertices_in_mm(self):
+        corners = [{"point": {"x": x, "y": y, "z": z}}
+                   for x in (-0.075, 0.075) for y in (-0.075, 0.075) for z in (0, 0.00635)]
+        sizes = server._part_sizes({"bodies": [{"id": "JHD", "vertices": corners}]})
+        assert sizes == {"JHD": [150.0, 150.0, 6.35]}
+
+    def test_generated_with_reads_the_defaults_line(self):
+        """Includes what is baked in (the grid), which values alone do not show."""
+        source = ("FeatureScript 3029;\n// Defaults: plate_width=150, plate_length=150, "
+                  "plate_thickness=6.35, columns=3, rows=3, rib_width=8, border_width=10\n")
+        got = server._generated_with(source)
+        assert got["columns"] == 3 and got["plate_thickness"] == 6.35
+        assert server._generated_with("no header") is None
+
     def test_parameters_read_as_they_do_in_the_dialog(self):
         read = server._parameter_value
         assert read({"btType": "BTMParameterQuantity-147", "expression": "8 mm"}) == "8 mm"

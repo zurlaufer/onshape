@@ -42,6 +42,7 @@ scope boundary against Onshape's native AI.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import os
 import sys
@@ -218,6 +219,14 @@ async def onshape_check_connection() -> str:
     # What `where` accepts. Without this the model has to guess a name or ask
     # for a URL, which is how the first real session ended up pasting one.
     known = _workspace.summary()
+    # Stated, not implied: a session saw a URL for an unnamed tab of a writable
+    # document and warned the write might be refused (2026-11-26).
+    writable = sorted(getattr(_workspace, "writable_documents", ()) or ())
+    if writable:
+        payload["writable_documents"] = {
+            "ids": writable,
+            "rule": "Every tab of these documents is writable, named here or not.",
+        }
     payload["known_places"] = known or (
         "No robot.toml found - pass Onshape URLs directly, and note that "
         "nothing will be writable until documents are listed there.")
@@ -354,6 +363,42 @@ def _parameter_value(param: dict) -> object:
     return kind.split("-")[0].replace("BTMParameter", "").lower() or None
 
 
+def _part_sizes(bodydetails: dict) -> dict[str, list[float]]:
+    """{part id: [x, y, z] extent in mm} from the vertices of each body.
+
+    World-axis extents. Exact for a plate drawn square to the axes; for an
+    angled one, `face_dimensions` measures the true size.
+    """
+    out: dict[str, list[float]] = {}
+    for body in (bodydetails.get("bodies") or []) if isinstance(bodydetails, dict) else []:
+        points = [v.get("point") or {} for v in body.get("vertices") or []]
+        if not points:
+            continue
+        out[str(body.get("id"))] = [
+            round((max(p.get(k, 0.0) for p in points)
+                   - min(p.get(k, 0.0) for p in points)) * 1000.0, 2)
+            for k in ("x", "y", "z")]
+    return out
+
+
+_DEFAULTS_LINE = re.compile(r"^// Defaults: (.+)$", re.MULTILINE)
+
+
+def _generated_with(source: str) -> dict[str, float] | None:
+    """The template parameters a copilot module was generated from."""
+    match = _DEFAULTS_LINE.search(source or "")
+    if not match:
+        return None
+    out: dict[str, float] = {}
+    for pair in match.group(1).split(","):
+        key, _, value = pair.strip().partition("=")
+        try:
+            out[key] = float(value)
+        except ValueError:
+            continue
+    return out or None
+
+
 async def _partstudio_overview(client, target: Target, studios: dict) -> str:
     """Features, their status and values, and the parts of one Part Studio.
 
@@ -384,11 +429,34 @@ async def _partstudio_overview(client, target: Target, studios: dict) -> str:
     parts = (await client.get(
         f"/parts/d/{target.document_id}/{target.wvm}/{target.wvm_id}"
         f"/e/{target.element_id}")).json()
+    # Part sizes, because a feature's values alone did not let a session run
+    # the check: it had rib and border but not the plate, so it could not say
+    # how much area 2 mm ribs remove (2026-11-26). One read from ~500/day.
+    details = (await client.get(f"{base}/bodydetails")).json()
+    sizes = _part_sizes(details)
+    requests = 4
+
+    # For a feature the copilot generated, the values it was generated with,
+    # including what is baked in rather than exposed (the pocket grid). Read
+    # from the "// Defaults:" line of its module. One cheap read per studio.
+    for row, feature in zip(features, data.get("features", [])):
+        studio = str(feature.get("namespace", "")).split("::")[0][1:]
+        if "applied_by_copilot_from" in row and studio:
+            source = (await client.get(
+                f"/featurestudios/d/{target.document_id}/{target.wvm}/"
+                f"{target.wvm_id}/e/{studio}")).json().get("contents", "")
+            requests += 1
+            generated = _generated_with(source)
+            if generated:
+                row["generated_with"] = generated
+
     payload = {
         "part_studio": target.describe(),
         "features": features,
-        "parts": [p.get("name") for p in parts],
-        "api_requests_used": 3,
+        "parts": [{"name": p.get("name"), **({"size_mm": sizes[p.get("partId")]}
+                                              if p.get("partId") in sizes else {})}
+                  for p in parts],
+        "api_requests_used": requests,
     }
     # A team's real Part Studio can hold hundreds of features. Degrade to
     # names and status, then to the last 40, rather than overflow.
