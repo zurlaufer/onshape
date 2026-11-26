@@ -59,6 +59,9 @@ RATE_LIMIT_HEADER = "x-rate-limit-remaining"
 #: identifier, not part of the route, so it collapses to `{id}`.
 _ID_SEGMENT = re.compile(r"^[0-9a-f]{16,}$", re.IGNORECASE)
 
+#: Path words whose next segment is an id even when it does not look like one.
+_ID_FOLLOWS = frozenset({"featureid", "partid"})
+
 #: Strip the `/api/vNN` prefix so a version bump does not orphan every bucket.
 _API_PREFIX = re.compile(r"^/api/v\d+", re.IGNORECASE)
 
@@ -80,9 +83,15 @@ def bucket_key(method: str, api_path: str) -> str:
     notion of "which endpoint is this", two consumers.
     """
     path = _API_PREFIX.sub("", api_path or "")
+    raw = path.split("/")
+    # Feature and part ids are not hex (`FBtS75MQC5IHflB_1`, `JHD`), so the
+    # pattern misses them. Measured 2026-11-25: every rolled-back insert opened
+    # its own ledger entry, `DELETE .../featureid/FBtS75MQC5IHflB_1`, and the
+    # snapshot grew with each one. Whatever follows these words is an id.
     segments = [
-        "{id}" if _ID_SEGMENT.match(seg) else seg
-        for seg in path.split("/")
+        "{id}" if _ID_SEGMENT.match(seg)
+        or (i > 0 and raw[i - 1] in _ID_FOLLOWS) else seg
+        for i, seg in enumerate(raw)
     ]
     return f"{method.upper()} {'/'.join(segments)}"
 

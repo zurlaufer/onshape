@@ -255,8 +255,16 @@ class Workspace:
             sorted(t.name for t in self.targets if t.name))
 
     def summary(self) -> list[dict[str, object]]:
-        """Compact listing for `onshape_check_connection`."""
+        """Compact listing for `onshape_check_connection`.
+
+        Carries the ids, not just the names, so a pasted URL can be matched to
+        an entry. Without them a workspace session could not tell whether a
+        link was writable, and guessed "robot parts" (2026-11-26). Writability
+        is per DOCUMENT, so any tab of a writable document is writable, listed
+        or not.
+        """
         return [
-            {"name": t.name, "kind": t.kind, "writable": t.writable}
+            {"name": t.name, "kind": t.kind, "writable": t.writable,
+             "document_id": t.document_id, "element_id": t.element_id}
             for t in self.targets if t.name
         ]

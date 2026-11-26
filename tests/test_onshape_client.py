@@ -351,6 +351,15 @@ class TestBucketKey:
                    "/w/b6722fcc07bf8d271ff14e47/e/57419d060d54790668e1b5ec"
         ) == "GET /assemblies/d/{id}/w/{id}/e/{id}"
 
+    def test_feature_and_part_ids_collapse_too(self):
+        """Not hex, so the pattern missed them; every rollback opened a new
+        ledger entry (2026-11-25)."""
+        base = "/api/v26/partstudios/d/" + "a" * 24 + "/w/" + "b" * 24 + "/e/" + "c" * 24
+        assert bucket_key("DELETE", base + "/features/featureid/FBtS75MQC5IHflB_1") ==             bucket_key("DELETE", base + "/features/featureid/Fikva0dBVKfFpf7_1")
+        parts = "/api/v26/parts/d/" + "a" * 24 + "/w/" + "b" * 24 + "/e/" + "c" * 24
+        assert bucket_key("GET", parts + "/partid/JHD/massproperties").endswith(
+            "/partid/{id}/massproperties")
+
     def test_a_version_bump_does_not_orphan_a_bucket(self):
         a = bucket_key("GET", "/api/v26/documents")
         b = bucket_key("GET", "/api/v27/documents")

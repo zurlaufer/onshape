@@ -159,7 +159,14 @@ writable = false
     def test_summary_is_small_enough_to_return_from_a_tool(self, manifest):
         rows = manifest.summary()
         assert {r["name"] for r in rows} == {"robot", "Intake"}
-        assert all(set(r) == {"name", "kind", "writable"} for r in rows)
+        assert all(set(r) == {"name", "kind", "writable", "document_id", "element_id"}
+                   for r in rows)
+
+    def test_summary_carries_ids_so_a_url_can_be_matched(self, manifest):
+        """2026-11-26: with names only, a session could not tell whether a
+        pasted link was writable, and guessed it was the read-only robot."""
+        rows = manifest.summary()
+        assert all(len(r["document_id"]) == 24 for r in rows)
 
 
 class TestTarget:
