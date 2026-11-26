@@ -12,7 +12,9 @@ by hand, re-run the script instead.
 Everything Onshape-related goes through the `frc-cad-copilot` MCP tools:
 
 - `onshape_check_connection` — is the copilot connected, and which documents
-  it knows by name.
+  it knows by name. Call it first. **If it returns `STALE_SERVER`, stop and
+  tell the user to reconnect the server and start a new conversation.** The
+  tools you hold may then lack options these instructions describe.
 - `onshape_assembly_overview` — read an assembly, **or a Part Studio's features
   with their values** (`rib: 8 mm`). Read it before changing a feature; do not
   assume its numbers. `onshape_find_part` — search an assembly.

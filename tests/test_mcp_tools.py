@@ -165,6 +165,37 @@ class TestCheckDesign:
         assert server._derived_numbers(Awkward(), {}) == {}
 
 
+class TestStaleServer:
+    """2026-11-26: a session ran half-hour-old server code, because the editor
+    keeps MCP servers alive across conversations."""
+
+    async def test_newer_code_on_disk_is_reported(self, monkeypatch):
+        class Client:
+            base_url = "https://cad.onshape.com"
+            quota = type("Q", (), {"snapshot": staticmethod(lambda: {})})()
+
+            async def get(self, path, **_):
+                return type("R", (), {"json": lambda self: {"items": []}})()
+
+        monkeypatch.setattr(server, "get_client", lambda: Client())
+        monkeypatch.setattr(server, "_source_stamp", lambda: server._LOADED_STAMP + 60)
+        payload = json.loads(await server.onshape_check_connection())
+        assert "NEW CONVERSATION" in payload["STALE_SERVER"]
+
+    async def test_current_code_says_nothing(self, monkeypatch):
+        class Client:
+            base_url = "https://cad.onshape.com"
+            quota = type("Q", (), {"snapshot": staticmethod(lambda: {})})()
+
+            async def get(self, path, **_):
+                return type("R", (), {"json": lambda self: {"items": []}})()
+
+        monkeypatch.setattr(server, "get_client", lambda: Client())
+        monkeypatch.setattr(server, "_source_stamp", lambda: server._LOADED_STAMP)
+        payload = json.loads(await server.onshape_check_connection())
+        assert "STALE_SERVER" not in payload
+
+
 class TestWriteSafetyAtTheToolSurface:
     async def test_a_team_robot_is_refused_at_zero_cost(self):
         """FM2. Refused before anything is generated or spent — a copilot that

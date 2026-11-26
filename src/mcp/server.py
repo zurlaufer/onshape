@@ -59,6 +59,24 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 os.chdir(PROJECT_ROOT)
 
+
+def _source_stamp() -> float:
+    """Newest modification time of any source file the server runs.
+
+    Mtimes, not the git commit, so an edit that has not been committed yet
+    counts too. About 40 files; cheap enough to re-read on every check.
+    """
+    return max((p.stat().st_mtime for p in (PROJECT_ROOT / "src").rglob("*.py")),
+               default=0.0)
+
+
+#: What the code on disk looked like when this process started. Measured
+#: 2026-11-26: the VS Code extension keeps an MCP server running across
+#: conversations, so a session started half an hour after a fix still ran
+#: the old code. It read a Part Studio through the assembly endpoint (400) and
+#: had no `values` option, while the freshly re-read CLAUDE.md described both.
+_LOADED_STAMP = _source_stamp()
+
 from fastmcp import FastMCP
 
 from src.api.onshape_client import (
@@ -183,6 +201,19 @@ async def onshape_check_connection() -> str:
         "base_url": client.base_url,
         "documents_visible": count,
     }
+
+    # Is this process running the code on disk? A reconnect alone is not
+    # enough: the server picks up new code, but a conversation keeps the tool
+    # list (descriptions, parameters) it started with. Measured 2026-11-26,
+    # after a reconnect the reads worked but `values` was still not
+    # accepted.
+    if _source_stamp() > _LOADED_STAMP + 1.0:
+        payload["STALE_SERVER"] = (
+            "This copilot server is running older code than is on disk. "
+            "Restart it (/mcp -> frc-cad-copilot -> Reconnect), then START A "
+            "NEW CONVERSATION: a conversation keeps the tool list it began "
+            "with. Until then, tools may be missing options the instructions "
+            "describe.")
 
     # What `where` accepts. Without this the model has to guess a name or ask
     # for a URL, which is how the first real session ended up pasting one.

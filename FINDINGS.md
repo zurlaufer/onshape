@@ -16,6 +16,31 @@ write the interpretation by hand, because the numbers do not contain it.
 
 ---
 
+## 2026-11-26 — T2 again: the server was half an hour old
+
+Transcript `14c95ea8`. The session reported that `onshape_assembly_overview`
+sent a Part Studio to the assembly endpoint (400), that apply had no
+`values`, and that `frc_check_design` returned no `apply_with`. Every one of
+those had been fixed and committed 17-20 minutes before the session started.
+
+**Cause:** the workspace's server process started at 20:19 and was still
+running at 21:14. The VS Code extension keeps an MCP server alive across
+conversations, while CLAUDE.md is re-read for each one. So the instructions
+described tools the process did not have. After a Reconnect the reads
+worked, but `values` was still refused: **a conversation keeps the tool
+list it started with.** The new code needs a restart and then a new
+conversation.
+
+The model handled it well. It stopped before building, quoted the defaults,
+reported the gap instead of working around it, and suggested editing the
+value in Onshape's dialog, which now exists.
+
+**Fix:** `onshape_check_connection` compares the newest source mtime on disk
+with the one loaded at start. It returns `STALE_SERVER` with the two-step
+remedy, and the workspace CLAUDE.md says to stop on it.
+
+---
+
 ## 2026-11-26 — T2 alone from the workspace: it stopped, but it was guessing
 
 Prompt: "change the Pocket Grid 3x3 feature to ribs 2 mm". There was no
