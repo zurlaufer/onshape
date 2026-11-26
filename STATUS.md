@@ -874,7 +874,17 @@ of this file. Full reasoning and kill triggers in the plan; the short version:
     **1 x 120 A went from 0.49 s OK to 0.67 s SLOW**, so two motors is now required, not
     just better. Confirm the supply limit against Constants.java (item 2).
 
-**Not worth doing:** an assembly builder (mates do not survive a SolidWorks import,
+**Reopened 2026-11-27: a mate-free assembler.** The judgement below, "not worth doing",
+was about mating imported SolidWorks robots. A workspace session then built a 2023 robot
+natively, top-down, every subsystem in its own Part Studio already in robot coordinates, and
+stopped at "final assembly by hand". `scripts/spike_assemble.py` measured the case that
+judgement did not cover: a whole Part Studio inserted by the API lands at identity, the
+assembly box equals the studio box to 0.0 mm, one instance per part names its source, and
+a Group (`mateGroup`, parameter `occurrencesQuery`) regenerates OK. No mates, so no silent
+wrong mate. Candidate for the 8th slot: `frc_assemble`. Revolute mates for a pivot are a
+later, separate question.
+
+**Not worth doing:** a mating assembly builder (mates do not survive a SolidWorks import,
 `graph.py` deliberately discards the occurrence data it would need, and a wrong mate fails
 silently); mass properties as its own tool (40.8 s for a number the UI shows instantly —
 make it an argument on the overview tool if at all); Open Alliance RAG (trigger unmet, and
@@ -882,4 +892,6 @@ item 2 is a higher-signal version of the same instinct); generic "infrastructure
 features" (the fourth-template mistake renamed — item 3 is the one with real demand);
 extracting the full FeatureScript symbol table, unless model-authored bodies return.
 
-**The 8th tool slot stays empty.** Only item 3 can earn it, and only if its spike passes.
+**The 8th tool slot.** It was held for item 3, whose hard half (setting a query parameter)
+now lives inside `frc_apply_featurescript` as `selections`. The mate-free assembler above
+is the first candidate with a passed spike and a session that asked for it.
