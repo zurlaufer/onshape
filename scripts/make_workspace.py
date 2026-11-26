@@ -51,6 +51,12 @@ TRUSTED_HOSTS = (
 )
 
 
+#: Every tool that writes to Onshape. Each asks the user before it runs; a
+#: writing tool missing from here would write without asking, which is why
+#: test_make_workspace.py checks the server for any it does not list.
+WRITING_TOOLS = ("frc_apply_featurescript", "frc_assemble")
+
+
 def python_executable() -> Path:
     """The repo's venv interpreter, Windows or POSIX layout."""
     for candidate in (REPO / ".venv" / "Scripts" / "python.exe",
@@ -127,8 +133,8 @@ def build(target: Path) -> list[Path]:
     #   allow  reads, checks and probes. They write nothing to Onshape; a probe
     #          costs one scarce-bucket request, which the probe cache and the
     #          quota floor already guard.
-    #   ask    frc_apply_featurescript, the only tool that writes to Onshape,
-    #          so the user sees every write.
+    #   ask    frc_apply_featurescript and frc_assemble, the tools that write
+    #          to Onshape, so the user sees every write.
     #   deny   Bash, Edit and Write. A user session has no reason to run
     #          commands or write files, and Bash was the hole in the repo deny
     #          rules: the evaluation's sessions reached the source through it.
@@ -141,7 +147,7 @@ def build(target: Path) -> list[Path]:
                 "onshape_find_part", "frc_list_checks", "frc_check_design",
                 "frc_probe_featurescript")]
             + [f"WebFetch(domain:{host})" for host in TRUSTED_HOSTS],
-            "ask": [ours + "frc_apply_featurescript"],
+            "ask": [ours + tool for tool in WRITING_TOOLS],
             "deny": ["Bash", "Edit", "Write", "NotebookEdit", "mcp__onshape-labs",
                      f"Read({repo_rule})"],
         },

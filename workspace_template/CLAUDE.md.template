@@ -28,6 +28,12 @@ Everything Onshape-related goes through the `frc-cad-copilot` MCP tools:
   feature, re-apply it with just that value, e.g. `values={{"rib": "3 mm"}}`;
   everything else is kept. Generated features also expose their dimensions
   in Onshape's own dialog.
+- `frc_assemble` — put Part Studios into an assembly at their designed
+  positions, held by one Group, with no mates. It is for a robot drawn in
+  robot coordinates: each subsystem's Part Studio placed where it sits on the
+  robot. It cannot place a part anywhere else, so draw subsystems in robot
+  coordinates if they are to be assembled this way. Call it without
+  `part_studios` to list them, and with `preview=True` before writing.
 
 This workspace has **no Bash, Edit or Write**, by design: a CAD session needs
 the tools above and nothing else. Read and Grep work, for `featurescript/`.

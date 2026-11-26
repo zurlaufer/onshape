@@ -71,10 +71,24 @@ def test_repo_is_out_of_reach(workspace):
         assert tool in deny
 
 
-def test_only_the_writing_tool_asks(workspace):
+def test_only_the_writing_tools_ask(workspace):
     perms = _permissions(workspace)
-    assert perms["ask"] == ["mcp__frc-cad-copilot__frc_apply_featurescript"]
-    assert not any("apply" in rule for rule in perms["allow"])
+    assert perms["ask"] == ["mcp__frc-cad-copilot__frc_apply_featurescript",
+                            "mcp__frc-cad-copilot__frc_assemble"]
+    assert not any("apply" in rule or "assemble" in rule for rule in perms["allow"])
+
+
+def test_every_server_tool_is_either_allowed_or_asks(workspace):
+    """A new tool left out of both lists would prompt with "don't ask again"
+    on offer; a writing one left in `allow` would write unseen."""
+    import re
+    source = (REPO / "src" / "mcp" / "server.py").read_text(encoding="utf-8")
+    tools = set(re.findall(r"@mcp\.tool\s+async def (\w+)", source))
+    perms = _permissions(workspace)
+    listed = {r.rsplit("__", 1)[-1] for r in perms["allow"] + perms["ask"]
+              if r.startswith("mcp__frc-cad-copilot__")}
+    assert tools == listed
+    assert len(tools) <= 8, "the tool budget (README, server.py docstring)"
 
 
 def test_vendor_pages_are_readable_but_search_still_asks(workspace):

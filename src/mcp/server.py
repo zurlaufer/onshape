@@ -102,6 +102,13 @@ from src.skills.apply import (
     studio_name_for,
 )
 from src.skills import standards
+from src.skills.assemble import (
+    DEFAULT_ASSEMBLY_NAME,
+    AssembleError,
+    assemble,
+    part_studio_tabs,
+    pick_studios,
+)
 from src.skills.selections import (
     SELECTORS,
     SelectionError,
@@ -747,6 +754,111 @@ async def frc_apply_featurescript(
         return _explain(exc)
 
     out["problems"] = out.get("problems", []) + [p.to_dict() for p in local]
+    out["api_requests_used"] = client.quota.requests_used - spent
+    out.update(_quota_note(client))
+    return json.dumps(out, indent=2)
+
+
+@mcp.tool
+async def frc_assemble(
+    where: str,
+    part_studios: list[str] | None = None,
+    preview: bool = False,
+) -> str:
+    """Put Part Studios into an assembly at their designed positions, no mates.
+
+    For a robot drawn top-down, every subsystem's Part Studio already in robot
+    coordinates. Each part is inserted where its Part Studio has it, and all of
+    them are held by one Group, "Robot (copilot)". Measured: parts land exactly
+    in place. Re-running inserts only what is missing and updates the group.
+
+    It does not mate, move or rotate anything. A part that must sit somewhere
+    other than its Part Studio position (a COTS module at four corners, an arm
+    at another angle) is not something this tool can place.
+
+    Args:
+        where: The assembly tab, or the document's URL without `/e/...` to use
+            (or create) a tab named "Robot". Writable documents only.
+        part_studios: Tab names (as shown in Onshape), ids or URLs, from the
+            same document. Leave out to get the list of Part Studios there.
+        preview: Report what would be inserted, writing nothing.
+    """
+    try:
+        target = _resolve(where)
+        client = get_client()
+    except Exception as exc:  # noqa: BLE001
+        return _explain(exc)
+
+    if not client.write_policy.allows(target.document_id):
+        return json.dumps({
+            "ok": False, "stage": "write_safety", "api_requests_used": 0,
+            "error": str(client.write_policy.refuse(target.document_id))}, indent=2)
+    if target.wvm != "w":
+        return json.dumps({
+            "ok": False, "stage": "where", "api_requests_used": 0,
+            "error": "That link is a version, which cannot change. Copy the URL "
+                     "of the document's workspace (it has /w/ in it)."}, indent=2)
+
+    spent = client.quota.requests_used
+    base = f"d/{target.document_id}/w/{target.wvm_id}"
+    try:
+        elements = (await client.get(f"/documents/{base}/elements")).json()
+        tabs = part_studio_tabs(elements)
+        if not part_studios:
+            return json.dumps({
+                "ok": False, "stage": "choose",
+                "error": "Name the Part Studios to assemble (part_studios=[...]).",
+                "part_studios_here": sorted(tabs.values()),
+                "api_requests_used": client.quota.requests_used - spent}, indent=2)
+        studios = pick_studios(part_studios, tabs, target.document_id)
+
+        kinds = {e["id"]: (e.get("elementType"), e.get("name")) for e in elements}
+        created = False
+        if target.element_id:
+            kind, assembly_name = kinds.get(target.element_id, (None, None))
+            if kind != "ASSEMBLY":
+                raise AssembleError(
+                    f"{where!r} is a {kind or 'tab that does not exist'}, not an "
+                    f"assembly. Give the assembly tab, or the document URL without "
+                    f"/e/... to use a tab named {DEFAULT_ASSEMBLY_NAME!r}.")
+            assembly_id = target.element_id
+        else:
+            assembly_name = DEFAULT_ASSEMBLY_NAME
+            assembly_id = next((eid for eid, (kind, name) in kinds.items()
+                                if kind == "ASSEMBLY" and name == DEFAULT_ASSEMBLY_NAME),
+                               None)
+            if assembly_id is None and preview:
+                return json.dumps({
+                    "ok": True, "stage": "preview", "changed": False,
+                    "would_create_tab": DEFAULT_ASSEMBLY_NAME,
+                    "would_insert": {name: "every solid part" for _, name in studios},
+                    "api_requests_used": client.quota.requests_used - spent}, indent=2)
+            if assembly_id is None:
+                assembly_id = (await client.post(
+                    f"/assemblies/{base}",
+                    json_body={"name": DEFAULT_ASSEMBLY_NAME})).json()["id"]
+                created = True
+
+        out = await assemble(client, document_id=target.document_id,
+                             workspace_id=target.wvm_id, assembly_id=assembly_id,
+                             studios=studios, preview=preview)
+    except AssembleError as exc:
+        return json.dumps({"ok": False, "stage": "refused", "error": str(exc),
+                           "api_requests_used": client.quota.requests_used - spent},
+                          indent=2)
+    except WriteRefused as exc:
+        return json.dumps({"ok": False, "stage": "write_safety",
+                           "error": str(exc)}, indent=2)
+    except Exception as exc:  # noqa: BLE001
+        return _explain(exc)
+
+    out["assembly"] = {
+        "name": assembly_name, "created": created,
+        "url": (f"{client.base_url}/documents/{target.document_id}"
+                f"/w/{target.wvm_id}/e/{assembly_id}")}
+    left_out = sorted(set(tabs.values()) - {name for _, name in studios})
+    if left_out:
+        out["other_part_studios"] = left_out
     out["api_requests_used"] = client.quota.requests_used - spent
     out.update(_quota_note(client))
     return json.dumps(out, indent=2)

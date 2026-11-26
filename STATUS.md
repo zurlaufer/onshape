@@ -68,7 +68,7 @@ worth repeating — see `FINDINGS.md`.
 | `src/api/onshape_client.py` | HMAC signing, classified retries, per-endpoint timeouts. Verified live. |
 | `src/api/quota.py` | Per-bucket quota ledger. Observational only — reads the header, never simulates. |
 | `src/api/errors.py` | `OnshapeError` hierarchy; every type carries one actionable sentence. |
-| `src/mcp/server.py` | FastMCP server, **7 tools** of an 8-tool budget, ~1,688 tokens per request. All take `where`. |
+| `src/mcp/server.py` | FastMCP server, **8 tools**, the full budget (`frc_assemble` took the last slot 2026-11-27). ~1,688 tokens per request before it. All take `where`. |
 | `src/context/cache.py` | Microversion-keyed disk cache + 60 s TTL. Cold = 2 requests, warm = 1, repeat = **0**. |
 | `src/context/graph.py` | `AssemblyGraph` — named tree + definition dedup. Pure, no I/O. |
 | `src/context/queries.py` | Narrow queries behind a hard 8 KB response ceiling. |
@@ -881,8 +881,13 @@ stopped at "final assembly by hand". `scripts/spike_assemble.py` measured the ca
 judgement did not cover: a whole Part Studio inserted by the API lands at identity, the
 assembly box equals the studio box to 0.0 mm, one instance per part names its source, and
 a Group (`mateGroup`, parameter `occurrencesQuery`) regenerates OK. No mates, so no silent
-wrong mate. Candidate for the 8th slot: `frc_assemble`. Revolute mates for a pivot are a
-later, separate question.
+wrong mate. **Built the same day as `frc_assemble`** (`src/skills/assemble.py`). Live on the session's
+Drivetrain + Electronics + Intake: 47 parts inserted, a Group of 52 regenerates OK, a re-run
+inserts 0 and updates the same group, and the assembly box equals the union of the three
+studio boxes to 0.0 mm. It refuses to add parts beside moved ones, and does not group a part
+that lands off its designed position. **Not covered:** anything placed somewhere other than
+its Part Studio position: the four MK4i modules (an imported sub-assembly, four corners,
+rotated) and an arm at another angle. Revolute mates for a pivot are a later question.
 
 **Not worth doing:** a mating assembly builder (mates do not survive a SolidWorks import,
 `graph.py` deliberately discards the occurrence data it would need, and a wrong mate fails
@@ -892,6 +897,6 @@ item 2 is a higher-signal version of the same instinct); generic "infrastructure
 features" (the fourth-template mistake renamed — item 3 is the one with real demand);
 extracting the full FeatureScript symbol table, unless model-authored bodies return.
 
-**The 8th tool slot.** It was held for item 3, whose hard half (setting a query parameter)
-now lives inside `frc_apply_featurescript` as `selections`. The mate-free assembler above
-is the first candidate with a passed spike and a session that asked for it.
+**The 8th tool slot is taken, by `frc_assemble`.** It was held for item 3, whose hard half
+(setting a query parameter) now lives inside `frc_apply_featurescript` as `selections`.
+A ninth tool means merging two, not adding one.
