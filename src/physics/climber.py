@@ -57,7 +57,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from src.physics.motors import Motor
+from src.physics.motors import Motor, clamp_voltage_for_current_limits
 
 __all__ = [
     "GRAVITY",
@@ -177,6 +177,9 @@ class FoldResult:
     total_current_a: float
     torque_margin: float
     stalled_at_deg: float | None = None
+    #: Set only when the battery is modelled (supply limit or resistance given).
+    min_battery_v: float | None = None
+    peak_supply_a: float | None = None
 
 
 def simulate_fold(
@@ -189,6 +192,9 @@ def simulate_fold(
     efficiency: float = 0.857,
     timestep_s: float = 2e-5,
     timeout_s: float = 5.0,
+    supply_limit_a: float | None = None,
+    battery_resistance_ohm: float | None = None,
+    battery_filter_s: float = 0.1,
 ) -> FoldResult:
     """Integrate the fold from 90 to 180 degrees under the motor's own curve.
 
@@ -205,6 +211,25 @@ def simulate_fold(
     A fold that stalls returns `completed=False` with the angle it died at,
     which is more useful than a bare failure: stalling at 90 degrees means the
     reduction is far too low, stalling at 150 means it is close.
+
+    THE BATTERY, optional. Give `supply_limit_a` (per motor) or
+    `battery_resistance_ohm` and the motors are driven through an electrical
+    model instead of the fixed-12 V curve. That is ReCalc's arm model
+    (github.com/tervay/recalc, MIT, read 2026-11-26), which this project
+    lacked:
+
+      - full command, clamped by `clamp_voltage_for_current_limits` to the
+        stator AND supply limits at the present battery voltage;
+      - stator current from back-EMF and winding resistance; supply current
+        from power balance, I_supply = I_stator * V_applied / V_battery;
+      - battery voltage = nominal - (sum of supply currents) * resistance,
+        through a single-pole filter of `battery_filter_s` (ReCalc uses 0.1 s).
+
+    With no limit and no resistance the electrical path reduces exactly to
+    the linear curve; a test pins that. The fixed-12 V model was optimistic
+    for a two-motor 80 A climb: 160 A from a battery with 15 mOhm behind it
+    is about 2.4 V of sag, and a 60 A supply limit caps current well before the
+    stator limit does at low speed.
     """
     if reduction <= 0:
         raise ValueError("reduction must be positive")
@@ -216,11 +241,34 @@ def simulate_fold(
     psi, omega, elapsed = _START, 0.0, 0.0
     peak_output = 0.0
 
+    electrical = supply_limit_a is not None or battery_resistance_ohm is not None
+    nominal = motor.nominal_voltage_v
+    battery_v = nominal
+    min_battery_v, peak_supply_a = nominal, 0.0
+    resistance = motor.resistance_ohm
+    ke = motor.back_emf_kt_nm_per_amp     # V*s/rad, equal to Kt in SI
+    kt = min(motor.kt_nm_per_amp, ke)     # the conservative one, as torque_at_current
+    smoothing = timestep_s / (battery_filter_s + timestep_s)
+
     while psi < _END - 1e-3 and elapsed < timeout_s:
         rpm = omega * reduction * 60.0 / (2.0 * math.pi)
-        available = motor.torque_at_rpm(rpm)
-        if current_limit_a is not None:
-            available = min(available, motor.torque_at_current(current_limit_a))
+        if electrical:
+            back_emf = ke * omega * reduction
+            v_applied = clamp_voltage_for_current_limits(
+                battery_v, back_emf, resistance, current_limit_a, supply_limit_a,
+                battery_v)
+            stator_a = (v_applied - back_emf) / resistance
+            available = max(0.0, kt * (stator_a - motor.free_current_a))
+            supply_a = (motor_count * stator_a * abs(v_applied) / battery_v
+                        if battery_v > 0 else 0.0)
+            loaded = nominal - supply_a * (battery_resistance_ohm or 0.0)
+            battery_v += (loaded - battery_v) * smoothing
+            min_battery_v = min(min_battery_v, battery_v)
+            peak_supply_a = max(peak_supply_a, supply_a)
+        else:
+            available = motor.torque_at_rpm(rpm)
+            if current_limit_a is not None:
+                available = min(available, motor.torque_at_current(current_limit_a))
 
         output = motor_count * efficiency * reduction * available
         peak_output = max(peak_output, output)
@@ -246,6 +294,8 @@ def simulate_fold(
                 total_current_a=(current_limit_a or 0.0) * motor_count,
                 torque_margin=peak_output / peak_load if peak_load else 0.0,
                 stalled_at_deg=math.degrees(psi),
+                min_battery_v=min_battery_v if electrical else None,
+                peak_supply_a=peak_supply_a if electrical else None,
             )
         psi += omega * timestep_s
         elapsed += timestep_s
@@ -259,6 +309,8 @@ def simulate_fold(
         total_current_a=(current_limit_a or 0.0) * motor_count,
         torque_margin=peak_output / peak_load if peak_load else 0.0,
         stalled_at_deg=None if completed else math.degrees(psi),
+        min_battery_v=min_battery_v if electrical else None,
+        peak_supply_a=peak_supply_a if electrical else None,
     )
 
 

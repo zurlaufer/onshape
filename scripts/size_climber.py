@@ -31,13 +31,19 @@ from src.physics.climber import (  # noqa: E402
 from src.physics.geartrain import GearStack, fold_layout, search_stacks  # noqa: E402
 from src.physics.motors import MOTORS  # noqa: E402
 from src.skills.climber_plate import (  # noqa: E402
+    BATTERY_RESISTANCE_OHM,
     CURRENT_LIMIT_A,
     GEOMETRY,
     MOTOR_COUNT,
     MOTOR_NAME,
     STACK,
+    SUPPLY_LIMIT_A,
     plate_geometry,
 )
+
+#: The battery as ReCalc models it; see climber_plate.SUPPLY_LIMIT_A.
+BATTERY = {"supply_limit_a": SUPPLY_LIMIT_A,
+           "battery_resistance_ohm": BATTERY_RESISTANCE_OHM}
 
 TARGET_S = 0.5
 
@@ -91,7 +97,8 @@ def main() -> int:
 
     rule("3. WHAT FOLDS IT IN TIME")
     print(f"target {math.degrees(math.pi / 2):.0f} deg in {TARGET_S} s, "
-          f"{motor.name}\n")
+          f"{motor.name}, battery modelled ({SUPPLY_LIMIT_A:g} A supply limit "
+          f"per motor, {BATTERY_RESISTANCE_OHM * 1000:g} mOhm)\n")
     print(f"{'motors':>7} {'limit':>7} {'best G':>8} {'time':>8} "
           f"{'total A':>9} {'margin':>8}")
     for count in (1, 2):
@@ -100,7 +107,7 @@ def main() -> int:
             for reduction in range(20, 401, 5):
                 result = simulate_fold(
                     motor, GEOMETRY, reduction=float(reduction),
-                    motor_count=count, current_limit_a=limit,
+                    motor_count=count, current_limit_a=limit, **BATTERY,
                 )
                 if result.completed and (best is None or result.seconds < best.seconds):
                     best = result
@@ -121,13 +128,21 @@ def main() -> int:
             print(f"  - {problem}")
     else:
         print("buildable: every driven gear clears the next stage's shaft")
-    result = simulate_fold(
+    ideal = simulate_fold(
         motor, GEOMETRY, reduction=STACK.ratio,
         motor_count=MOTOR_COUNT, current_limit_a=CURRENT_LIMIT_A,
     )
-    print(f"\n{MOTOR_COUNT} x {motor.name} at {CURRENT_LIMIT_A:g} A: "
-          f"{result.seconds:.2f} s, margin {result.torque_margin:.2f}x, "
-          f"{result.total_current_a:.0f} A total")
+    result = simulate_fold(
+        motor, GEOMETRY, reduction=STACK.ratio,
+        motor_count=MOTOR_COUNT, current_limit_a=CURRENT_LIMIT_A, **BATTERY,
+    )
+    print(f"\n{MOTOR_COUNT} x {motor.name} at {CURRENT_LIMIT_A:g} A stator:")
+    print(f"  fixed 12 V      : {ideal.seconds:.3f} s, margin {ideal.torque_margin:.2f}x")
+    print(f"  with the battery: {result.seconds:.3f} s, margin "
+          f"{result.torque_margin:.2f}x, battery down to "
+          f"{result.min_battery_v:.1f} V, {result.peak_supply_a:.0f} A peak supply")
+    print(f"  {'OK' if result.completed and result.seconds <= TARGET_S else 'SLOW'} "
+          f"against the {TARGET_S} s target")
 
     plate = plate_geometry()
     print(f"\nplate {plate.width_mm:.3f} x {plate.height_mm:.3f} x "
@@ -153,7 +168,7 @@ def main() -> int:
             continue
         folded = simulate_fold(
             motor, GEOMETRY, reduction=stack.ratio,
-            motor_count=MOTOR_COUNT, current_limit_a=CURRENT_LIMIT_A,
+            motor_count=MOTOR_COUNT, current_limit_a=CURRENT_LIMIT_A, **BATTERY,
         )
         timing = f"{folded.seconds:.2f}s" if folded.completed else "stalls"
         print(f"{str(stack):<28} {stack.ratio:>7.1f}: "

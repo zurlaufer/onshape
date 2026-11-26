@@ -34,6 +34,7 @@ __all__ = [
     "MOTORS",
     "get_motor",
     "reduction_from_stages",
+    "clamp_voltage_for_current_limits",
 ]
 
 
@@ -150,6 +151,11 @@ class Motor:
         return self.torque_at_rpm(rpm) * omega
 
     @property
+    def resistance_ohm(self) -> float:
+        """Winding resistance, from the stall point: V / I_stall."""
+        return self.nominal_voltage_v / self.stall_current_a
+
+    @property
     def peak_power_w(self) -> float:
         """Peak mechanical power (W) under the linear model.
 
@@ -211,6 +217,41 @@ MOTORS: dict[str, Motor] = {
         source="https://docs.revrobotics.com/brushless/neo/v1.1",
     ),
 }
+
+
+def clamp_voltage_for_current_limits(
+    v_applied: float,
+    v_back_emf: float,
+    r_ohms: float,
+    stator_limit_a: float | None,
+    supply_limit_a: float | None,
+    v_supply: float,
+) -> float:
+    """The voltage a controller can apply without breaking either current limit.
+
+    Ported from ReCalc (github.com/tervay/recalc, MIT licence),
+    `wpilib/patches/wpilibc/wasm/sim_util.h`, `ClampVoltageForCurrentLimits`.
+    It was read on 2026-11-26, because ReCalc models the SUPPLY limit and this
+    project did not (FINDINGS 2026-11-23).
+
+    Stator limit, linear around back-EMF:  |V - E| / R <= I_stator
+    Supply limit, from power balance across the controller (P_in = P_out),
+    I_supply = I_stator * V / V_supply, which gives the quadratic
+        V^2 - E*V - I_supply_limit * R * V_supply <= 0
+    The result is clamped to +-V_supply, because a controller cannot apply more
+    than the battery gives it. A limit of None means unlimited.
+    """
+    stator = math.inf if stator_limit_a is None else stator_limit_a
+    supply = math.inf if supply_limit_a is None else supply_limit_a
+
+    v_min = v_back_emf - stator * r_ohms
+    v_max = v_back_emf + stator * r_ohms
+    if math.isfinite(supply):
+        root = math.sqrt(max(0.0, v_back_emf * v_back_emf / 4.0
+                              + supply * r_ohms * v_supply))
+        v_min = max(v_min, v_back_emf / 2.0 - root)
+        v_max = min(v_max, v_back_emf / 2.0 + root)
+    return min(max(max(v_min, min(v_applied, v_max)), -v_supply), v_supply)
 
 
 def get_motor(key: str) -> Motor:

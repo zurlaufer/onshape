@@ -28,7 +28,7 @@ from src.physics.climber import (
     simulate_fold,
     static_hold_reduction,
 )
-from src.physics.motors import MOTORS
+from src.physics.motors import MOTORS, clamp_voltage_for_current_limits
 
 START = math.pi / 2
 END = math.pi
@@ -215,3 +215,51 @@ class TestStaticHold:
     def test_current_below_free_current_is_refused(self, robot):
         with pytest.raises(ValueError):
             static_hold_reduction(MOTORS["kraken_x60_foc"], robot, amps=1.0)
+
+
+class TestBattery:
+    """ReCalc's electrical model (supply limit, battery sag), ported 2026-11-26."""
+
+    def _fold(self, robot, **kwargs):
+        return simulate_fold(MOTORS["kraken_x60_foc"], robot, reduction=112.7,
+                             motor_count=2, current_limit_a=80.0, **kwargs)
+
+    def test_with_no_battery_it_is_the_old_model_exactly(self, robot):
+        """The electrical path must reduce to the linear curve, or the two
+        models disagree about more than the battery."""
+        old = self._fold(robot)
+        new = self._fold(robot, battery_resistance_ohm=0.0)
+        assert new.seconds == pytest.approx(old.seconds, abs=2e-4)
+        assert old.min_battery_v is None
+        assert new.min_battery_v == pytest.approx(12.0)
+
+    def test_sag_slows_the_fold_and_reports_the_voltage(self, robot):
+        old = self._fold(robot)
+        sagged = self._fold(robot, battery_resistance_ohm=0.015)
+        assert sagged.seconds > old.seconds * 1.05
+        assert 9.6 < sagged.min_battery_v < 11.0  # 160 A * 15 mOhm = 2.4 V at most
+
+    def test_the_supply_limit_caps_battery_current(self, robot):
+        capped = self._fold(robot, battery_resistance_ohm=0.015, supply_limit_a=60.0)
+        assert capped.peak_supply_a == pytest.approx(120.0, abs=0.5)
+
+    def test_the_design_case_still_meets_half_a_second(self, robot):
+        """Measured 2026-11-26: 0.449 s with ReCalc's 60 A / 15 mOhm defaults."""
+        result = self._fold(robot, battery_resistance_ohm=0.015, supply_limit_a=60.0)
+        assert result.completed and result.seconds < 0.5
+
+
+class TestVoltageClamp:
+    """The ReCalc clamp, checked by hand."""
+
+    def test_stator_limit_is_back_emf_plus_i_r(self):
+        assert clamp_voltage_for_current_limits(12.0, 2.0, 0.025, 80.0, None, 12.0) == \
+            pytest.approx(2.0 + 80.0 * 0.025)
+
+    def test_supply_limit_is_the_quadratic_root(self):
+        # E = 0, so V_max = sqrt(I_supply * R * V_supply) = sqrt(60 * 0.025 * 12)
+        assert clamp_voltage_for_current_limits(12.0, 0.0, 0.025, None, 60.0, 12.0) == \
+            pytest.approx(math.sqrt(60 * 0.025 * 12))
+
+    def test_never_above_the_battery(self):
+        assert clamp_voltage_for_current_limits(20.0, 11.0, 0.025, None, None, 11.5) == 11.5

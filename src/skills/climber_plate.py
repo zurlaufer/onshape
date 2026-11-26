@@ -41,6 +41,8 @@ __all__ = [
     "MOTOR_NAME",
     "MOTOR_COUNT",
     "CURRENT_LIMIT_A",
+    "SUPPLY_LIMIT_A",
+    "BATTERY_RESISTANCE_OHM",
     "PLATE_THICKNESS_MM",
     "BORE_DIAMETER_MM",
     "ALUMINIUM_6061_DENSITY",
@@ -68,6 +70,16 @@ MOTOR_COUNT = 2
 #: Per motor. Two at 80 A beat one at 120 A on every axis that matters here:
 #: faster, more torque margin, and each motor runs cool enough to survive it.
 CURRENT_LIMIT_A = 80.0
+
+#: Per-motor SUPPLY current limit, and the battery's internal plus wiring
+#: resistance. Both are ReCalc's defaults for its arm calculator (60 A,
+#: 0.015 ohm; github.com/tervay/recalc app/routes/arm.tsx, read 2026-11-26).
+#: They are NOT this robot's numbers. Confirm the supply limit against the
+#: team's Constants.java (STATUS "What to do next", item 2). With them the
+#: fold takes 0.449 s, against 0.402 s at a fixed 12 V; the battery sags to
+#: about 10.3 V.
+SUPPLY_LIMIT_A = 60.0
+BATTERY_RESISTANCE_OHM = 0.015
 
 #: 1/4 in aluminium.
 PLATE_THICKNESS_MM = 6.35
