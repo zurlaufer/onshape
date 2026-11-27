@@ -889,6 +889,22 @@ that lands off its designed position. **Not covered:** anything placed somewhere
 its Part Studio position: the four MK4i modules (an imported sub-assembly, four corners,
 rotated) and an arm at another angle. Revolute mates for a pivot are a later question.
 
+**Swerve modules, spiked the same day** (`scripts/spike_place_modules.py`). The MK4i's six
+"10-32 X 2.5" frame screws, fitted against the frame's tube holes over quarter turns, give
+**exactly four** placements, one per corner, every screw on a hole to 0.0000 mm, all 24 holes
+used; the tube meets both module plates (z 44.45, 95.25) with no Z offset. Placed in a
+"SPIKE robot" tab with the three Part Studios: the group of 56 regenerates OK, all 24 screws
+measure 0.0000 mm from the robot's own occurrence transforms, and Onshape's box equals the
+predicted one to 0.000 mm. **Two traps, both measured:**
+- An **absolute** `occurrencetransforms` on a sub-assembly instance is applied to every part
+  inside it: all 146 occurrences collapsed onto the module's corner. Use `isRelative: true`
+  from a fresh (identity) insert.
+- The first check composed the module's transforms with ours and passed at 0.0000 mm on that
+  collapsed module. A placement check must read Onshape's own occurrence transforms, and the
+  bounding box is the cheap independent guard that caught it.
+Not yet a tool: the screw name is MK4i-specific, and a general version would fit any
+sub-assembly's vertical mounting axes to a named Part Studio's holes.
+
 **Not worth doing:** a mating assembly builder (mates do not survive a SolidWorks import,
 `graph.py` deliberately discards the occurrence data it would need, and a wrong mate fails
 silently); mass properties as its own tool (40.8 s for a number the UI shows instantly —

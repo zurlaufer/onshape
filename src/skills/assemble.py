@@ -226,7 +226,7 @@ async def assemble(client, *, document_id: str, workspace_id: str, assembly_id: 
                     "documentId": document_id, "elementId": plan.element_id,
                     "partId": part_id})
 
-    _, after = await _read(client, base, assembly_id, document_id)
+    definition, after = await _read(client, base, assembly_id, document_id)
     ours = {(p.element_id, pid) for p in plans for pid in p.parts}
     members = [inst for key, inst in after.items() if key in ours]
     not_in_place = [inst.get("name") for inst in members if not inst["_at_identity"]
@@ -242,7 +242,10 @@ async def assemble(client, *, document_id: str, workspace_id: str, assembly_id: 
                   if f.get("featureType") == "mateGroup" and f.get("name") == GROUP_NAME),
                  None)
     keep = set(_group_members(group)) if group else set()
-    live = {inst["id"] for inst in after.values()}
+    # Every top-level instance still there, sub-assemblies included: a placed
+    # swerve module is a sub-assembly, and dropping it from the group on a
+    # re-run would leave it free to be dragged off its corner.
+    live = {inst["id"] for inst in definition.get("rootAssembly", {}).get("instances", [])}
     ids = sorted({inst["id"] for inst in members if inst["_at_identity"]}
                  | (keep & live))
 

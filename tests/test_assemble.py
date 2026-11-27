@@ -153,6 +153,17 @@ class TestRerun:
         run(robot, [(FRAME, "Drivetrain")])
         assert len(group_members(robot)) == 3
 
+    def test_a_grouped_sub_assembly_stays_in_the_group(self, robot):
+        """A placed swerve module is a sub-assembly instance, not a part."""
+        run(robot, BOTH)
+        robot.instances.append({"id": "MOD", "type": "Assembly", "documentId": DOC,
+                                "elementId": "m" * 24, "name": "MK4i <1>"})
+        robot.transforms["MOD"] = SHIFTED
+        robot.features[0]["parameters"][0]["queries"].append(
+            {"btType": "BTMIndividualOccurrenceQuery-626", "path": ["MOD"]})
+        run(robot, BOTH)
+        assert "MOD" in group_members(robot)
+
 
 class TestWrongPositions:
     def test_refuses_to_add_beside_moved_parts(self, robot):
