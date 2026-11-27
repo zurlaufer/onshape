@@ -32,9 +32,12 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
+from .placement import ModulePlan, PlacementError, placed_already, plan_placement, verify
+
 __all__ = [
     "GROUP_NAME", "DEFAULT_ASSEMBLY_NAME", "AssembleError", "StudioPlan",
-    "assemble", "part_studio_tabs", "pick_studios", "is_identity",
+    "assemble", "part_studio_tabs", "assembly_tabs", "pick_tab", "pick_studios",
+    "is_identity",
 ]
 
 #: Matched by name on a re-run, so the copilot updates its own group and
@@ -64,35 +67,52 @@ def part_studio_tabs(elements: list[dict]) -> dict[str, str]:
             if e.get("elementType") == "PARTSTUDIO"}
 
 
+def assembly_tabs(elements: list[dict]) -> dict[str, str]:
+    """Element id -> tab name, for the assemblies of one document."""
+    return {e["id"]: e.get("name", "") for e in elements
+            if e.get("elementType") == "ASSEMBLY"}
+
+
+def pick_tab(item: str, tabs: dict[str, str], document_id: str, kind: str) -> tuple[str, str]:
+    """One request as (element id, tab name).
+
+    A tab name, an id, a URL, or a piece of a name that only one tab has:
+    imported tabs carry names like "SDS MK4i Swerve Module, 10-32, Falcons",
+    which nobody types in full.
+    """
+    text = item.strip()
+    other_doc = _DOCUMENT_IN_URL.search(text)
+    if other_doc and other_doc.group(1).lower() != document_id.lower():
+        raise AssembleError(
+            f"{item!r} is in another document. Only tabs of the assembly's own "
+            f"document can be used here.")
+    in_url = _ELEMENT_IN_URL.search(text)
+    by_name = {name.strip().lower(): eid for eid, name in tabs.items()}
+    eid = (by_name.get(text.lower())
+           or (text if text in tabs else None)
+           or (in_url.group(1) if in_url and in_url.group(1) in tabs else None))
+    if eid is None and text and not in_url:
+        partial = [e for e, name in tabs.items() if text.lower() in name.lower()]
+        if len(partial) > 1:
+            raise AssembleError(
+                f"{item!r} matches several {kind}s: {sorted(tabs[e] for e in partial)}. "
+                f"Give more of the name.")
+        eid = partial[0] if partial else None
+    if eid is None:
+        raise AssembleError(
+            f"Not a {kind} of this document: {item!r}. {kind.capitalize()}s here: "
+            f"{sorted(tabs.values())}.")
+    return eid, tabs[eid]
+
+
 def pick_studios(requested: list[str], tabs: dict[str, str],
                  document_id: str) -> list[tuple[str, str]]:
-    """Each request as (element id, tab name): a tab name, an id, or a URL.
-
-    Tab names are what a person sees, so they come first. Raises on anything
-    that is not a Part Studio of this document, naming the ones that are.
-    """
-    by_name = {name.strip().lower(): eid for eid, name in tabs.items()}
+    """Each request as (element id, tab name), without repeats."""
     picked: list[tuple[str, str]] = []
-    unknown: list[str] = []
     for item in requested:
-        text = item.strip()
-        other_doc = _DOCUMENT_IN_URL.search(text)
-        if other_doc and other_doc.group(1).lower() != document_id.lower():
-            raise AssembleError(
-                f"{item!r} is in another document. Only Part Studios of the "
-                f"assembly's own document can be assembled here.")
-        in_url = _ELEMENT_IN_URL.search(text)
-        eid = (by_name.get(text.lower())
-               or (text if text in tabs else None)
-               or (in_url.group(1) if in_url and in_url.group(1) in tabs else None))
-        if eid is None:
-            unknown.append(item)
-        elif eid not in (p[0] for p in picked):
-            picked.append((eid, tabs[eid]))
-    if unknown:
-        raise AssembleError(
-            f"Not a Part Studio of this document: {unknown}. "
-            f"Part Studios here: {sorted(tabs.values())}.")
+        choice = pick_tab(item, tabs, document_id, "Part Studio")
+        if choice not in picked:
+            picked.append(choice)
     if not picked:
         raise AssembleError(
             f"Name the Part Studios to assemble. Part Studios here: "
@@ -174,14 +194,20 @@ async def _read(client, base: str, assembly_id: str, document_id: str):
 
 
 async def assemble(client, *, document_id: str, workspace_id: str, assembly_id: str,
-                   studios: list[tuple[str, str]], preview: bool = False) -> dict:
-    """Insert what is missing from each Part Studio, then group all of it.
+                   studios: list[tuple[str, str]], preview: bool = False,
+                   place: list[tuple[str, str, str, str]] = ()) -> dict:
+    """Insert what is missing from each Part Studio, place each module, then
+    group all of it.
+
+    `place` holds (module assembly id, its name, target Part Studio id, its
+    name): the module goes wherever its mounting holes fit the target's
+    holes (`placement.py`).
 
     Returns a JSON-ready dict. `ok` is False only when something is wrong in
     Onshape afterwards; a refusal raises AssembleError before any write.
     """
     base = f"d/{document_id}/w/{workspace_id}"
-    _, existing = await _read(client, base, assembly_id, document_id)
+    before, existing = await _read(client, base, assembly_id, document_id)
 
     plans: list[StudioPlan] = []
     for element_id, name in studios:
@@ -199,45 +225,108 @@ async def assemble(client, *, document_id: str, workspace_id: str, assembly_id: 
             f"New parts would land where the design says and disagree with them. "
             f"Move them back (or start a new assembly tab), then run this again.")
 
-    out: dict = {
-        "studios": {p.name: {"parts": len(p.parts), "already_there": len(p.present),
-                             "to_insert": [p.parts[i] for i in p.missing]}
-                    for p in plans},
-    }
+    # Every module is fitted before anything is written, so a refusal for the
+    # second module does not leave the first half-placed.
+    modules: list[ModulePlan] = []
+    for module_id, module_name, target_id, target_name in place:
+        if module_id == assembly_id:
+            raise AssembleError("An assembly cannot be placed inside itself.")
+        try:
+            plan = await plan_placement(
+                client, base=base, document_id=document_id, module_id=module_id,
+                module_name=module_name, target_id=target_id, target_name=target_name)
+        except PlacementError as exc:
+            raise AssembleError(f"{module_name} onto {target_name}: {exc}") from exc
+        plan.present = placed_already(before, plan)
+        modules.append(plan)
+
+    out: dict = {}
+    if studios:
+        out["studios"] = {p.name: {"parts": len(p.parts), "already_there": len(p.present),
+                                   "to_insert": [p.parts[i] for i in p.missing]}
+                          for p in plans}
     empty = [p.name for p in plans if not p.parts]
     if empty:
         out["no_solid_parts"] = empty
+    if modules:
+        out["placed"] = {}
+        for plan in modules:
+            described = plan.describe()
+            for i, row in enumerate(described["placements"]):
+                row["state"] = ("already there" if i in plan.present
+                                else "would insert" if preview else "inserted")
+            out["placed"][plan.module_name] = described
     if preview:
         out.update(ok=True, stage="preview", changed=False)
         return out
 
+    target = f"/assemblies/{base}/e/{assembly_id}"
     for plan in plans:
         missing = plan.missing
         if not missing:
             continue
         if not plan.present:
             # One request for the whole studio: the case the spike measured.
-            await client.post(f"/assemblies/{base}/e/{assembly_id}/instances", json_body={
+            await client.post(f"{target}/instances", json_body={
                 "documentId": document_id, "elementId": plan.element_id,
                 "isWholePartStudio": True, "includePartTypes": ["PARTS"]})
         else:
             for part_id in missing:
-                await client.post(f"/assemblies/{base}/e/{assembly_id}/instances", json_body={
+                await client.post(f"{target}/instances", json_body={
                     "documentId": document_id, "elementId": plan.element_id,
                     "partId": part_id})
+
+    if any(len(m.present) < len(m.placements) for m in modules):
+        known = {i["id"] for i in before.get("rootAssembly", {}).get("instances", [])}
+        for plan in modules:
+            for _ in range(len(plan.placements) - len(plan.present)):
+                await client.post(f"{target}/instances", json_body={
+                    "documentId": document_id, "elementId": plan.module_id,
+                    "isAssembly": True})
+        current = (await client.get(target)).json()
+        fresh = [i for i in current.get("rootAssembly", {}).get("instances", [])
+                 if i["id"] not in known]
+        for plan in modules:
+            new_ids = [i["id"] for i in fresh if i.get("elementId") == plan.module_id]
+            todo = [i for i in range(len(plan.placements)) if i not in plan.present]
+            for index, iid in zip(todo, new_ids):
+                # RELATIVE: an absolute transform on a sub-assembly instance is
+                # applied to every part inside it (placement.py). A fresh
+                # instance sits at identity, so the move IS the placement.
+                await client.post(f"{target}/occurrencetransforms", json_body={
+                    "occurrences": [{"path": [iid]}],
+                    "transform": plan.placements[index].transform(),
+                    "isRelative": True})
+                plan.present[index] = iid
 
     definition, after = await _read(client, base, assembly_id, document_id)
     ours = {(p.element_id, pid) for p in plans for pid in p.parts}
     members = [inst for key, inst in after.items() if key in ours]
     not_in_place = [inst.get("name") for inst in members if not inst["_at_identity"]
                     and (inst["elementId"], inst["partId"]) not in existing]
-    out["inserted"] = sum(len(p.missing) for p in plans)
+    if studios:
+        out["inserted"] = sum(len(p.missing) for p in plans)
+
+    placed_ok: set[str] = set()
+    broken: set[str] = set()
+    for plan in modules:
+        rows = out["placed"][plan.module_name]["placements"]
+        for index, iid in plan.present.items():
+            check = verify(definition, iid, plan.placements[index], plan.definition, plan.bodies)
+            rows[index].update({k: v for k, v in check.items() if k != "in_place"})
+            if check["in_place"]:
+                placed_ok.add(iid)
+            else:
+                broken.add(iid)
+                rows[index]["state"] = "NOT IN PLACE: delete this instance by hand"
+                not_in_place.append(f"{plan.module_name} at {rows[index]['at_mm']}")
     if not_in_place:
         out["not_in_place"] = not_in_place
 
-    # The group: every in-place part from these studios, plus whatever the
-    # group already held, so naming fewer studios on a re-run drops nothing.
-    features = (await client.get(f"/assemblies/{base}/e/{assembly_id}/features")).json()
+    # The group: every in-place part and module, plus whatever the group
+    # already held, so naming fewer studios on a re-run drops nothing. A
+    # module found out of place is taken out, so it cannot be locked there.
+    features = (await client.get(f"{target}/features")).json()
     group = next((f for f in features.get("features", [])
                   if f.get("featureType") == "mateGroup" and f.get("name") == GROUP_NAME),
                  None)
@@ -246,12 +335,12 @@ async def assemble(client, *, document_id: str, workspace_id: str, assembly_id: 
     # swerve module is a sub-assembly, and dropping it from the group on a
     # re-run would leave it free to be dragged off its corner.
     live = {inst["id"] for inst in definition.get("rootAssembly", {}).get("instances", [])}
-    ids = sorted({inst["id"] for inst in members if inst["_at_identity"]}
-                 | (keep & live))
+    ids = sorted(({inst["id"] for inst in members if inst["_at_identity"]}
+                  | placed_ok | (keep & live)) - broken)
 
     status = None
     if len(ids) >= 2:
-        path = f"/assemblies/{base}/e/{assembly_id}/features"
+        path = f"{target}/features"
         if group:
             path += f"/featureid/{quote(group['featureId'], safe='')}"
         reply = (await client.post(path, json_body=_group_feature(

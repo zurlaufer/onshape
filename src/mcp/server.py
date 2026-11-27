@@ -34,7 +34,8 @@ So the mitigation is discipline, not a safety net:
 
 TOOL BUDGET
 -----------
-Ceiling of 8 tools, all FRC-specific, and no generic `onshape_api_call`
+Few tools (8 today; a judgement, not a cap: README), all FRC-specific. A new
+capability goes into an existing tool when it fits one. No generic `onshape_api_call`
 passthrough — a wide surface costs context on every request and dissolves the
 scope boundary against Onshape's native AI.
 """
@@ -106,8 +107,10 @@ from src.skills.assemble import (
     DEFAULT_ASSEMBLY_NAME,
     AssembleError,
     assemble,
+    assembly_tabs,
     part_studio_tabs,
     pick_studios,
+    pick_tab,
 )
 from src.skills.selections import (
     SELECTORS,
@@ -763,6 +766,7 @@ async def frc_apply_featurescript(
 async def frc_assemble(
     where: str,
     part_studios: list[str] | None = None,
+    place: dict[str, str] | None = None,
     preview: bool = False,
 ) -> str:
     """Put Part Studios into an assembly at their designed positions, no mates.
@@ -772,16 +776,21 @@ async def frc_assemble(
     them are held by one Group, "Robot (copilot)". Measured: parts land exactly
     in place. Re-running inserts only what is missing and updates the group.
 
-    It does not mate, move or rotate anything. A part that must sit somewhere
-    other than its Part Studio position (a COTS module at four corners, an arm
-    at another angle) is not something this tool can place.
+    `place` puts a bought module (an assembly tab, e.g. an imported swerve
+    module) wherever its mounting holes fit a Part Studio's holes: one copy
+    per fitting position, turned in quarter turns, height from where faces
+    meet. Refused, before any write, if fewer than 3 holes fit, the pattern
+    is symmetric, or the height is ambiguous. Each copy is then checked
+    against what Onshape reports. Nothing else is moved, rotated or mated.
 
     Args:
         where: The assembly tab, or the document's URL without `/e/...` to use
             (or create) a tab named "Robot". Writable documents only.
         part_studios: Tab names (as shown in Onshape), ids or URLs, from the
-            same document. Leave out to get the list of Part Studios there.
-        preview: Report what would be inserted, writing nothing.
+            same document. Leave out (with no `place`) to list the tabs.
+        place: Module assembly tab -> the Part Studio drilled for it, e.g.
+            {"MK4i": "Drivetrain"}. A unique piece of a tab name is enough.
+        preview: Report what would be inserted and where, writing nothing.
     """
     try:
         target = _resolve(where)
@@ -804,13 +813,19 @@ async def frc_assemble(
     try:
         elements = (await client.get(f"/documents/{base}/elements")).json()
         tabs = part_studio_tabs(elements)
-        if not part_studios:
+        modules_here = assembly_tabs(elements)
+        if not part_studios and not place:
             return json.dumps({
                 "ok": False, "stage": "choose",
-                "error": "Name the Part Studios to assemble (part_studios=[...]).",
+                "error": "Name the Part Studios to assemble (part_studios=[...]), "
+                         "and any module to place (place={module: Part Studio}).",
                 "part_studios_here": sorted(tabs.values()),
+                "assemblies_here": sorted(modules_here.values()),
                 "api_requests_used": client.quota.requests_used - spent}, indent=2)
-        studios = pick_studios(part_studios, tabs, target.document_id)
+        studios = pick_studios(part_studios, tabs, target.document_id) if part_studios else []
+        placing = [(*pick_tab(module, modules_here, target.document_id, "assembly"),
+                    *pick_tab(onto, tabs, target.document_id, "Part Studio"))
+                   for module, onto in (place or {}).items()]
 
         kinds = {e["id"]: (e.get("elementType"), e.get("name")) for e in elements}
         created = False
@@ -832,6 +847,8 @@ async def frc_assemble(
                     "ok": True, "stage": "preview", "changed": False,
                     "would_create_tab": DEFAULT_ASSEMBLY_NAME,
                     "would_insert": {name: "every solid part" for _, name in studios},
+                    "would_place": {m: f"onto {t}, where its holes fit"
+                                    for _, m, _, t in placing},
                     "api_requests_used": client.quota.requests_used - spent}, indent=2)
             if assembly_id is None:
                 assembly_id = (await client.post(
@@ -841,7 +858,7 @@ async def frc_assemble(
 
         out = await assemble(client, document_id=target.document_id,
                              workspace_id=target.wvm_id, assembly_id=assembly_id,
-                             studios=studios, preview=preview)
+                             studios=studios, preview=preview, place=placing)
     except AssembleError as exc:
         return json.dumps({"ok": False, "stage": "refused", "error": str(exc),
                            "api_requests_used": client.quota.requests_used - spent},

@@ -902,8 +902,19 @@ predicted one to 0.000 mm. **Two traps, both measured:**
 - The first check composed the module's transforms with ours and passed at 0.0000 mm on that
   collapsed module. A placement check must read Onshape's own occurrence transforms, and the
   bounding box is the cheap independent guard that caught it.
-Not yet a tool: the screw name is MK4i-specific, and a general version would fit any
-sub-assembly's vertical mounting axes to a named Part Studio's holes.
+**Built the same day as `frc_assemble(place={module: Part Studio})`** (`src/skills/placement.py`),
+by geometry, not screw names: every vertical cylinder of the module whose radius suits a
+target hole (screw in hole, or hole over hole) votes for a quarter turn and a move. On the
+real MK4i (1,298 vertical axes) and frame (58 holes) it finds the same four placements, height
+offset 0, faces meeting at 44.45 / 92.075 / 95.25. Checking every pair's move exactly took
+50 s; voting in 0.5 mm bins, then checking only bins that can still win, takes 0.75 s.
+Refuses before any write: fewer than 3 holes, a symmetric pattern, placements sharing a hole,
+no contact, an ambiguous height. Live 2026-11-27 on "SPIKE modules" (one module already
+placed): found it "already there", inserted 3 + 52 parts, every module 0.0 mm by the robot's
+own occurrences, group of 56 OK; a re-run inserts nothing. On "SPIKE assemble" it flagged
+all four collapsed modules ("parts inside it moved up to 184.2 mm") and took them out of the
+group. **Limits:** mounting axes must be vertical; quarter turns about Z only; the module must
+be an assembly tab of the same document.
 
 **Not worth doing:** a mating assembly builder (mates do not survive a SolidWorks import,
 `graph.py` deliberately discards the occurrence data it would need, and a wrong mate fails
@@ -913,6 +924,10 @@ item 2 is a higher-signal version of the same instinct); generic "infrastructure
 features" (the fourth-template mistake renamed — item 3 is the one with real demand);
 extracting the full FeatureScript symbol table, unless model-authored bodies return.
 
-**The 8th tool slot is taken, by `frc_assemble`.** It was held for item 3, whose hard half
-(setting a query parameter) now lives inside `frc_apply_featurescript` as `selections`.
-A ninth tool means merging two, not adding one.
+**Tool count: 8, and 8 is a judgement, not a limit.** The slot held for item 3 went to
+`frc_assemble`; item 3's hard half (setting a query parameter) lives inside
+`frc_apply_featurescript` as `selections`. The README's "8 maximum" argued token cost, but
+Claude Code loads MCP tools on demand (the 2026-11-27 workspace session fetched ours through
+ToolSearch), so a ninth costs little there. The rule now: a capability gets a new tool only
+when it does not fit an existing one (module placement fitted `frc_assemble`), and never a
+generic API passthrough.

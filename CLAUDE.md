@@ -13,7 +13,7 @@ a session read STATUS.md twice, and still hit it.)
 ## Running things
 
 ```bash
-./.venv/Scripts/python.exe -m pytest tests/ -q      # offline, ~464 tests
+./.venv/Scripts/python.exe -m pytest tests/ -q      # offline, ~478 tests
 ./.venv/Scripts/python.exe scripts/check_no_print.py
 ./.venv/Scripts/python.exe scripts/smoke_auth.py    # 1 request
 ```

@@ -88,7 +88,6 @@ def test_every_server_tool_is_either_allowed_or_asks(workspace):
     listed = {r.rsplit("__", 1)[-1] for r in perms["allow"] + perms["ask"]
               if r.startswith("mcp__frc-cad-copilot__")}
     assert tools == listed
-    assert len(tools) <= 8, "the tool budget (README, server.py docstring)"
 
 
 def test_vendor_pages_are_readable_but_search_still_asks(workspace):

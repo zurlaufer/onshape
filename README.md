@@ -126,8 +126,11 @@ request rather than refetching 1.09 MB.
 
 ### Two standing constraints
 
-**Tool budget: 8 tools maximum, all FRC-specific.** Tool definitions are re-sent on every
-request, so a wide surface costs tokens continuously and degrades tool selection. There is
+**Few tools, all FRC-specific (8 today).** A new capability goes into an existing tool when
+it fits one, and gets its own only when it does not. Every tool is a description the model
+must choose between, a permission rule, and a surface to test; overlapping tools degrade
+selection. Token cost argued for a hard cap once, but Claude Code loads MCP tools on demand,
+so the count is a judgement, not a limit (STATUS.md). There is
 deliberately **no generic `onshape_api_call(method, path)` passthrough** — it would be less code,
 but it dissolves the boundary against Onshape's own native AI and throws away every payload
 guarantee. Interactive 3D selection, fillets/chamfers, 2D drawings, and general CAD Q&A stay with

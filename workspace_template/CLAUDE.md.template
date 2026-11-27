@@ -31,9 +31,14 @@ Everything Onshape-related goes through the `frc-cad-copilot` MCP tools:
 - `frc_assemble` — put Part Studios into an assembly at their designed
   positions, held by one Group, with no mates. It is for a robot drawn in
   robot coordinates: each subsystem's Part Studio placed where it sits on the
-  robot. It cannot place a part anywhere else, so draw subsystems in robot
-  coordinates if they are to be assembled this way. Call it without
-  `part_studios` to list them, and with `preview=True` before writing.
+  robot, so draw subsystems in robot coordinates if they are to be assembled
+  this way. A bought module imported as an assembly (a swerve module) is
+  placed with `place={{"<module tab>": "<Part Studio drilled for it>"}}`: one
+  copy wherever its mounting holes fit, checked in Onshape afterwards. If it
+  refuses (too few holes, symmetric pattern, unclear height), report the
+  reason; do not try to place the module another way. Call it with no
+  arguments but `where` to list the tabs, and with `preview=True` before
+  writing.
 
 This workspace has **no Bash, Edit or Write**, by design: a CAD session needs
 the tools above and nothing else. Read and Grep work, for `featurescript/`.
